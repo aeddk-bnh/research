@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from market_structure import find_swings
+from .market_structure import find_swings
 
 
 def detect_fvg(df):

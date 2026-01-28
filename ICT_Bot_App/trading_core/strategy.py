@@ -1,6 +1,6 @@
-from market_structure import get_current_bias, detect_bos_choch, find_swings
-from pd_arrays import detect_fvg, detect_order_block, get_swing_and_premium_discount
-from config import TIMEFRAME, TIMEFRAME_SMALLER, RISK_PERCENT_PER_TRADE, STOP_LOSS_POINTS, TAKE_PROFIT_POINTS, PLATFORM
+from .market_structure import get_current_bias, detect_bos_choch, find_swings
+from .pd_arrays import detect_fvg, detect_order_block, get_swing_and_premium_discount
+from .config_loader import TIMEFRAME, TIMEFRAME_SMALLER, RISK_PERCENT_PER_TRADE, STOP_LOSS_POINTS, TAKE_PROFIT_POINTS
 import math
 
 def calculate_sl_tp(entry_price, order_type, point):
@@ -15,13 +15,17 @@ def calculate_sl_tp(entry_price, order_type, point):
         return None, None
     return sl, tp
 
-def calculate_position_size(connector, sl_points):
+def calculate_position_size(connector, sl_points, signals=None):
     """Tính toán khối lượng giao dịch dựa trên % rủi ro."""
     balance = connector.get_account_balance()
     symbol_info = connector.get_symbol_info()
 
     if balance is None or symbol_info is None:
-        print("Không thể tính khối lượng, thiếu thông tin tài khoản hoặc symbol.")
+        msg = "Không thể tính khối lượng, thiếu thông tin tài khoản hoặc symbol."
+        if signals:
+            signals.log_message.emit(msg)
+        else:
+            print(msg)
         return None
 
     # 1. Tính toán rủi ro bằng tiền
@@ -38,7 +42,11 @@ def calculate_position_size(connector, sl_points):
     loss_per_lot = sl_points * point_value
     
     if loss_per_lot <= 0:
-        print("Không thể tính khối lượng, mức lỗ trên mỗi lot <= 0.")
+        msg = "Không thể tính khối lượng, mức lỗ trên mỗi lot <= 0."
+        if signals:
+            signals.log_message.emit(msg)
+        else:
+            print(msg)
         return None
 
     # 3. Tính toán khối lượng
@@ -50,20 +58,28 @@ def calculate_position_size(connector, sl_points):
     
     # Kiểm tra khối lượng tối thiểu và tối đa
     if volume < symbol_info.volume_min:
-        print(f"Khối lượng tính toán ({volume}) nhỏ hơn mức tối thiểu ({symbol_info.volume_min}). Hủy lệnh.")
+        msg = f"Khối lượng tính toán ({volume}) nhỏ hơn mức tối thiểu ({symbol_info.volume_min}). Hủy lệnh."
+        if signals:
+            signals.log_message.emit(msg)
+        else:
+            print(msg)
         return None
     if volume > symbol_info.volume_max:
         volume = symbol_info.volume_max
-        print(f"Khối lượng tính toán vượt mức tối đa, sử dụng khối lượng tối đa: {volume}")
+        msg = f"Khối lượng tính toán vượt mức tối đa, sử dụng khối lượng tối đa: {volume}"
+        if signals:
+            signals.log_message.emit(msg)
+        else:
+            print(msg)
 
     return volume
 
-def evaluate_signal(df_main, df_small):
+def evaluate_signal(df_main, df_small, signals=None):
     """
     Đánh giá tín hiệu giao dịch, tích hợp logic Premium/Discount.
     """
     # 1. Xác định xu hướng chính
-    bias = get_current_bias(df_main)
+    bias = get_current_bias(df_main, signals)
     if bias == 'neutral':
         return 'none', None
 
@@ -75,7 +91,11 @@ def evaluate_signal(df_main, df_small):
     swing_high, swing_low, equilibrium = get_swing_and_premium_discount(df_main, swing_highs, swing_lows)
 
     if equilibrium is None:
-        print("Không xác định được con sóng để tính Premium/Discount.")
+        msg = "Không xác định được con sóng để tính Premium/Discount."
+        if signals:
+            signals.log_message.emit(msg)
+        else:
+            print(msg)
         return 'none', None
         
     latest_price = df_main['close'].iloc[-1]
@@ -84,7 +104,11 @@ def evaluate_signal(df_main, df_small):
     if bias == 'long':
         # Điều kiện MUA: Giá phải nằm trong vùng Discount
         if latest_price > equilibrium:
-            print(f"Giá hiện tại {latest_price} đang ở vùng Premium, không tìm lệnh Mua.")
+            msg = f"Giá hiện tại {latest_price} đang ở vùng Premium, không tìm lệnh Mua."
+            if signals:
+                signals.log_message.emit(msg)
+            else:
+                print(msg)
             return 'none', None
             
         # --- Tìm kiếm tín hiệu từ Order Block ---
@@ -94,7 +118,11 @@ def evaluate_signal(df_main, df_small):
             bullish_ob = bullish_ob_list.iloc[-1] # Lấy OB gần nhất
             if abs(latest_price - bullish_ob['ob_zone_low']) / bullish_ob['ob_zone_low'] < 0.005:
                 if not df_small[df_small['choch'] == 'bullish'].empty:
-                    print(f"Tín hiệu MUA từ OB: Giá ({latest_price}) về OB tại vùng Discount và có CHOCH xác nhận.")
+                    msg = f"Tín hiệu MUA từ OB: Giá ({latest_price}) về OB tại vùng Discount và có CHOCH xác nhận."
+                    if signals:
+                        signals.log_message.emit(msg)
+                    else:
+                        print(msg)
                     return 'long', latest_price
 
         # --- Tìm kiếm tín hiệu từ Fair Value Gap (FVG) ---
@@ -104,13 +132,21 @@ def evaluate_signal(df_main, df_small):
             # Kiểm tra giá có đang trong vùng FVG không
             if bullish_fvg['fvg_bullish_low'] <= latest_price <= bullish_fvg['fvg_bullish_high']:
                 if not df_small[df_small['choch'] == 'bullish'].empty:
-                    print(f"Tín hiệu MUA từ FVG: Giá ({latest_price}) vào FVG tại vùng Discount và có CHOCH xác nhận.")
+                    msg = f"Tín hiệu MUA từ FVG: Giá ({latest_price}) vào FVG tại vùng Discount và có CHOCH xác nhận."
+                    if signals:
+                        signals.log_message.emit(msg)
+                    else:
+                        print(msg)
                     return 'long', latest_price
 
     elif bias == 'short':
         # Điều kiện BÁN: Giá phải nằm trong vùng Premium
         if latest_price < equilibrium:
-            print(f"Giá hiện tại {latest_price} đang ở vùng Discount, không tìm lệnh Bán.")
+            msg = f"Giá hiện tại {latest_price} đang ở vùng Discount, không tìm lệnh Bán."
+            if signals:
+                signals.log_message.emit(msg)
+            else:
+                print(msg)
             return 'none', None
 
         # --- Tìm kiếm tín hiệu từ Order Block ---
@@ -119,7 +155,11 @@ def evaluate_signal(df_main, df_small):
             bearish_ob = bearish_ob_list.iloc[-1] # Lấy OB gần nhất
             if abs(latest_price - bearish_ob['ob_zone_high']) / bearish_ob['ob_zone_high'] < 0.005:
                 if not df_small[df_small['choch'] == 'bearish'].empty:
-                    print(f"Tín hiệu BÁN từ OB: Giá ({latest_price}) về OB tại vùng Premium và có CHOCH xác nhận.")
+                    msg = f"Tín hiệu BÁN từ OB: Giá ({latest_price}) về OB tại vùng Premium và có CHOCH xác nhận."
+                    if signals:
+                        signals.log_message.emit(msg)
+                    else:
+                        print(msg)
                     return 'short', latest_price
         
         # --- Tìm kiếm tín hiệu từ Fair Value Gap (FVG) ---
@@ -129,18 +169,30 @@ def evaluate_signal(df_main, df_small):
             # Kiểm tra giá có đang trong vùng FVG không
             if bearish_fvg['fvg_bearish_low'] <= latest_price <= bearish_fvg['fvg_bearish_high']:
                 if not df_small[df_small['choch'] == 'bearish'].empty:
-                    print(f"Tín hiệu BÁN từ FVG: Giá ({latest_price}) vào FVG tại vùng Premium và có CHOCH xác nhận.")
+                    msg = f"Tín hiệu BÁN từ FVG: Giá ({latest_price}) vào FVG tại vùng Premium và có CHOCH xác nhận."
+                    if signals:
+                        signals.log_message.emit(msg)
+                    else:
+                        print(msg)
                     return 'short', latest_price
 
     return 'none', None
 
-def execute_strategy(connector):
+def execute_strategy(connector, signals=None):
     """Thực thi chiến lược, với khối lượng động."""
     if connector.get_open_positions():
-        print("Đã có vị thế đang mở. Bỏ qua.")
+        msg = "Đã có vị thế đang mở. Bỏ qua."
+        if signals:
+            signals.log_message.emit(msg)
+        else:
+            print(msg)
         return
 
-    print("Đang lấy và phân tích dữ liệu...")
+    msg = "Đang lấy và phân tích dữ liệu..."
+    if signals:
+        signals.log_message.emit(msg)
+    else:
+        print(msg)
     df_main = connector.fetch_ohlcv(TIMEFRAME, limit=200)
     df_small = connector.fetch_ohlcv(TIMEFRAME_SMALLER, limit=100)
 
@@ -152,25 +204,52 @@ def execute_strategy(connector):
     df_main_analyzed = detect_order_block(df_with_bos)
     df_small_analyzed = detect_bos_choch(df_small.copy())
     
-    signal, entry_price = evaluate_signal(df_main_analyzed, df_small_analyzed)
+    signal, entry_price = evaluate_signal(df_main_analyzed, df_small_analyzed, signals)
 
     if signal != 'none':
         symbol_info = connector.get_symbol_info()
         if symbol_info is None:
-            print("Không thể lấy thông tin symbol để tính SL/TP.")
+            msg = "Không thể lấy thông tin symbol để tính SL/TP."
+            if signals:
+                signals.log_message.emit(msg)
+            else:
+                print(msg)
             return
         
         sl, tp = calculate_sl_tp(entry_price, signal, symbol_info.point)
         
         # Tính toán khối lượng động
-        quantity = calculate_position_size(connector, STOP_LOSS_POINTS)
+        quantity = calculate_position_size(connector, STOP_LOSS_POINTS, signals)
         
         if quantity is not None and quantity > 0:
-            print(f"Tín hiệu {signal.upper()}: Giá={entry_price}, SL={sl}, TP={tp}, Khối lượng={quantity}")
+            msg = f"Tín hiệu {signal.upper()}: Giá={entry_price}, SL={sl}, TP={tp}, Khối lượng={quantity}"
+            if signals:
+                signals.log_message.emit(msg)
+                # Có thể phát thêm tín hiệu cho lệnh mới
+                signals.new_position.emit({
+                    'id': 'N/A', # Connector nên cung cấp ID thực tế
+                    'symbol': connector.get_symbol(),
+                    'side': signal.upper(),
+                    'quantity': quantity,
+                    'entry_price': entry_price,
+                    'sl': sl,
+                    'tp': tp,
+                    'status': 'OPEN'
+                })
+            else:
+                print(msg)
             connector.place_order(signal, quantity, sl_price=sl, tp_price=tp)
         else:
-            print("Không thể xác định khối lượng giao dịch. Hủy lệnh.")
+            msg = "Không thể xác định khối lượng giao dịch. Hủy lệnh."
+            if signals:
+                signals.log_message.emit(msg)
+            else:
+                print(msg)
     else:
-        print("Không có tín hiệu giao dịch rõ ràng.")
+        msg = "Không có tín hiệu giao dịch rõ ràng."
+        if signals:
+            signals.log_message.emit(msg)
+        else:
+            print(msg)
 
 

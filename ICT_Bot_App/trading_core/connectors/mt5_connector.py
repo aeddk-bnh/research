@@ -3,25 +3,31 @@ import pandas as pd
 import pytz
 from datetime import datetime
 from .base_connector import BaseConnector
-from config import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, MT5_PATH, MT5_SYMBOL
+from ..config_loader import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, MT5_PATH, MT5_SYMBOL
 
 class MT5Connector(BaseConnector):
-    def __init__(self):
+    def __init__(self, signals=None):
         self.symbol = MT5_SYMBOL
-        self.timezone = pytz.timezone("Etc/UTC") # MT5 server time is UTC
+        self.timezone = pytz.timezone("Etc/UTC")
+        self.signals = signals
+
+    def log(self, message):
+        """Gửi log thông qua signal nếu có, nếu không thì print."""
+        if self.signals:
+            self.signals.log_message.emit(message)
+        else:
+            print(message)
 
     def connect(self):
-        print("Đang kết nối tới MetaTrader 5...")
-        # Thử khởi tạo mà không có path và server, chỉ dùng login và password
-        # Điều này giả định rằng MT5 đã chạy và đăng nhập sẵn, và ta sẽ xác thực tài khoản cụ thể
+        self.log("Đang kết nối tới MetaTrader 5...")
         if not mt5.initialize(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER):
-            print(f"kết nối MT5 thất bại, lỗi = {mt5.last_error()}")
+            self.log(f"kết nối MT5 thất bại, lỗi = {mt5.last_error()}")
             return False
-        print("Kết nối MT5 thành công.")
+        self.log("Kết nối MT5 thành công.")
         return True
 
     def disconnect(self):
-        print("Ngắt kết nối MT5.")
+        self.log("Ngắt kết nối MT5.")
         mt5.shutdown()
 
     def get_symbol(self):
@@ -31,9 +37,13 @@ class MT5Connector(BaseConnector):
         """Lấy số dư tài khoản hiện tại."""
         account_info = mt5.account_info()
         if account_info is None:
-            print("[MT5] Không thể lấy thông tin tài khoản.")
+            self.log("[MT5] Không thể lấy thông tin tài khoản.")
             return None
-        return account_info.balance
+        balance = account_info.balance
+        # Phát tín hiệu cập nhật tài khoản
+        if self.signals:
+            self.signals.account_summary.emit({'balance': balance, 'pnl': account_info.profit})
+        return balance
 
     def get_symbol_info(self):
         """Lấy thông tin chi tiết của symbol."""
@@ -47,7 +57,7 @@ class MT5Connector(BaseConnector):
             }
             rates = mt5.copy_rates_from_pos(self.symbol, tf_map[timeframe], 0, limit)
             if rates is None:
-                print(f"[MT5] Không lấy được dữ liệu cho {self.symbol}. Lỗi: {mt5.last_error()}")
+                self.log(f"[MT5] Không lấy được dữ liệu cho {self.symbol}. Lỗi: {mt5.last_error()}")
                 return None
             
             df = pd.DataFrame(rates)
@@ -55,13 +65,13 @@ class MT5Connector(BaseConnector):
             df.rename(columns={'tick_volume': 'volume'}, inplace=True)
             return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
         except Exception as e:
-            print(f"[MT5] Lỗi khi lấy dữ liệu OHLCV: {e}")
+            self.log(f"[MT5] Lỗi khi lấy dữ liệu OHLCV: {e}")
             return None
 
     def place_order(self, order_type, quantity, sl_price, tp_price):
         symbol_info = self.get_symbol_info()
         if symbol_info is None:
-            print(f"[MT5] Không tìm thấy thông tin symbol: {self.symbol}")
+            self.log(f"[MT5] Không tìm thấy thông tin symbol: {self.symbol}")
             return None
 
         point = symbol_info.point
@@ -85,13 +95,25 @@ class MT5Connector(BaseConnector):
         try:
             result = mt5.order_send(request)
             if result.retcode != mt5.TRADE_RETCODE_DONE:
-                print(f"[MT5] Đặt lệnh thất bại, retcode={result.retcode}, comment={result.comment}")
+                self.log(f"[MT5] Đặt lệnh thất bại, retcode={result.retcode}, comment={result.comment}")
                 return None
             
-            print(f"[MT5] Đã đặt lệnh thành công. Order ID: {result.order}")
+            self.log(f"[MT5] Đã đặt lệnh thành công. Order ID: {result.order}")
+            # Phát tín hiệu lệnh mới
+            if self.signals:
+                self.signals.new_position.emit({
+                    'id': str(result.order),
+                    'symbol': self.symbol,
+                    'side': order_type.upper(),
+                    'quantity': quantity,
+                    'entry_price': result.price,
+                    'sl': sl_price,
+                    'tp': tp_price,
+                    'status': 'OPEN'
+                })
             return result.order
         except Exception as e:
-            print(f"[MT5] Lỗi khi đặt lệnh: {e}")
+            self.log(f"[MT5] Lỗi khi đặt lệnh: {e}")
             return None
 
     def get_open_positions(self):
@@ -101,5 +123,6 @@ class MT5Connector(BaseConnector):
                 return False
             return len(positions) > 0
         except Exception as e:
-            print(f"[MT5] Lỗi khi kiểm tra vị thế: {e}")
+            self.log(f"[MT5] Lỗi khi kiểm tra vị thế: {e}")
             return False
+

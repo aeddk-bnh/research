@@ -1,0 +1,6 @@
+PySide6
+pandas
+numpy
+pytz
+ccxt
+MetaTrader5

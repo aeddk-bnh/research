@@ -7,7 +7,7 @@ def find_swings(df, swing_length=10):
     df['swing_low'] = df['low'].rolling(window=swing_length*2+1, center=True).apply(lambda x: x.iloc[swing_length] if x.iloc[swing_length] == x.min() else np.nan)
     return df
 
-def get_current_bias(df):
+def get_current_bias(df, signals=None):
     """
     Xác định xu hướng chính (bias) dựa trên sự kiện cấu trúc thị trường gần nhất (BOS/CHOCH).
     """
@@ -49,12 +49,24 @@ def get_current_bias(df):
 
     # Xác định xu hướng dựa trên sự kiện gần nhất
     if 'bullish' in latest_event_name:
-        print(f"Market Bias: LONG (dựa trên {latest_event_name.replace('_', ' ').upper()})")
+        msg = f"Market Bias: LONG (dựa trên {latest_event_name.replace('_', ' ').upper()})"
+        if signals:
+            signals.log_message.emit(msg)
+            signals.market_bias.emit("LONG")
+        else:
+            print(msg)
         return 'long'
     elif 'bearish' in latest_event_name:
-        print(f"Market Bias: SHORT (dựa trên {latest_event_name.replace('_', ' ').upper()})")
+        msg = f"Market Bias: SHORT (dựa trên {latest_event_name.replace('_', ' ').upper()})"
+        if signals:
+            signals.log_message.emit(msg)
+            signals.market_bias.emit("SHORT")
+        else:
+            print(msg)
         return 'short'
     else:
+        if signals:
+            signals.market_bias.emit("NEUTRAL")
         return 'neutral'
 
 

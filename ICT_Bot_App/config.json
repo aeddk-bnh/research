@@ -1,0 +1,39 @@
+{
+    "platform": "mt5",
+    "binance": {
+        "api_key": "your_api_key_here",
+        "secret_key": "your_secret_key_here",
+        "symbol": "BTC/USDT"
+    },
+    "mt5": {
+        "login": 270873003,
+        "password": "Mgnaermgnaer1.",
+        "server": "Exness-MT5Trial17",
+        "path": "C:\\\\Program Files\\\\MetaTrader 5\\\\terminal64.exe",
+        "symbol": "BTCUSDm"
+    },
+    "trading": {
+        "timeframe": "1h",
+        "timeframe_smaller": "15m",
+        "risk_percent_per_trade": 1.0
+    },
+    "kill_zones": [
+        {"name": "Asian", "start": [19, 0], "end": [22, 0], "enabled": true},
+        {"name": "London", "start": [1, 0], "end": [5, 0], "enabled": true},
+        {"name": "New York", "start": [7, 0], "end": [10, 0], "enabled": true},
+        {"name": "London Close", "start": [10, 0], "end": [12, 0], "enabled": true}
+    ],
+    "risk_management": {
+        "mt5": {
+            "stop_loss_points": 2000,
+            "take_profit_points": 4000
+        },
+        "binance": {
+            "stop_loss_percent": 2.0,
+            "take_profit_percent": 4.0
+        }
+    },
+    "logging": {
+        "log_file": "bot.log"
+    }
+}

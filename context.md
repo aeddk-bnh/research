@@ -79,3 +79,26 @@ Tài liệu này tóm tắt toàn bộ quá trình làm việc, từ giai đoạ
         -   **(Ưu tiên #3)** Cập nhật `evaluate_signal` để sử dụng cả FVG.
         -   **(Tùy chọn)** Thêm logic sử dụng Breaker Block (BB).
 - **Kết quả:** Xác định được các điểm chính yếu trong logic giao dịch hiện tại, tạo nền tảng cho các giai đoạn phát triển tiếp theo nhằm nâng cao chất lượng và độ tin cậy của bot.
+
+---
+
+## Giai đoạn 6: Chuyển đổi sang Ứng dụng Desktop với UI
+
+- **Mục tiêu:** Chuyển đổi bot giao dịch dòng lệnh thành một ứng dụng desktop có giao diện người dùng (UI) chuyên nghiệp sử dụng PySide6.
+- **Thực thi:**
+    1.  **Tái cấu trúc mã nguồn:** Tách biệt logic giao dịch (`trading_core`) khỏi logic giao diện người dùng (`app`).
+    2.  **Tách cấu hình:** Chuyển từ `config.py` sang `config.json` và tạo `ConfigManager` để quản lý cấu hình.
+    3.  **Tạo luồng nền (Worker Thread):** Di chuyển vòng lặp chính của bot vào một `QThread` riêng biệt (`BotWorker`) để tránh làm "đơ" giao diện.
+    4.  **Sử dụng Signals/Slots:** Thiết lập hệ thống giao tiếp giữa `BotWorker` và `MainWindow` thông qua các tín hiệu (`Signal`) và slot để cập nhật UI một cách an toàn từ luồng khác.
+    5.  **Xây dựng UI:** Tạo giao diện chính với các tab: Dashboard, Cấu hình, Nhật ký, Giao dịch.
+    6.  **Tích hợp chức năng:** Kết nối các nút bấm (Bắt đầu/Dừng Bot, Lưu Cấu hình), cập nhật trạng thái, hiển thị log, và bảng lệnh.
+    7.  **Gỡ lỗi và hoàn thiện:**
+        -   Cải thiện chức năng "Lưu Cấu hình" để xử lý lỗi người dùng nhập sai.
+        -   Cải thiện logic "Bắt đầu/Dừng Bot" để đảm bảo thread được quản lý đúng cách.
+        -   Thêm chức năng "Lịch sử giao dịch".
+        -   Cập nhật P&L theo thời gian thực.
+        -   Ghi log ra file.
+        -   Thêm hộp thoại xác nhận khi đóng ứng dụng.
+        -   **(Hiện tại)** Sửa lỗi cập nhật trạng thái Kill Zone lên UI. Ban đầu, trạng thái không cập nhật do `QTimer` được khởi tạo trong luồng sai. Đã sửa bằng cách tạo và quản lý `QTimer` hoàn toàn bên trong `BotWorker` (luồng worker).
+- **Kết quả:** Ứng dụng desktop có UI đã được tạo, cho phép người dùng dễ dàng quản lý và giám sát bot giao dịch ICT.
+
