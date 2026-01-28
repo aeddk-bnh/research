@@ -15,13 +15,58 @@
     "trading": {
         "timeframe": "1h",
         "timeframe_smaller": "15m",
-        "risk_percent_per_trade": 1.0
+        "risk_percent_per_trade": 1.0,
+        "symbol": ""
     },
     "kill_zones": [
-        {"name": "Asian", "start": [19, 0], "end": [22, 0], "enabled": true},
-        {"name": "London", "start": [1, 0], "end": [5, 0], "enabled": true},
-        {"name": "New York", "start": [7, 0], "end": [10, 0], "enabled": true},
-        {"name": "London Close", "start": [10, 0], "end": [12, 0], "enabled": true}
+        {
+            "name": "Asian",
+            "start": [
+                19,
+                0
+            ],
+            "end": [
+                22,
+                0
+            ],
+            "enabled": true
+        },
+        {
+            "name": "London",
+            "start": [
+                1,
+                0
+            ],
+            "end": [
+                5,
+                0
+            ],
+            "enabled": true
+        },
+        {
+            "name": "New York",
+            "start": [
+                7,
+                0
+            ],
+            "end": [
+                10,
+                0
+            ],
+            "enabled": true
+        },
+        {
+            "name": "London Close",
+            "start": [
+                10,
+                0
+            ],
+            "end": [
+                12,
+                0
+            ],
+            "enabled": true
+        }
     ],
     "risk_management": {
         "mt5": {

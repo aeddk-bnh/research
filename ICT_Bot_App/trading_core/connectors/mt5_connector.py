@@ -1,4 +1,4 @@
-import MetaTrader5 as mt5
+import MetaTrader5 as mt5 # type: ignore
 import pandas as pd
 import pytz
 from datetime import datetime
@@ -11,29 +11,31 @@ class MT5Connector(BaseConnector):
         self.timezone = pytz.timezone("Etc/UTC")
         self.signals = signals
 
-    def log(self, message):
+    def log(self, message: str) -> None:
         """Gửi log thông qua signal nếu có, nếu không thì print."""
         if self.signals:
             self.signals.log_message.emit(message)
         else:
             print(message)
 
-    def connect(self):
+    def connect(self) -> bool:
         self.log("Đang kết nối tới MetaTrader 5...")
-        if not mt5.initialize(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER):
-            self.log(f"kết nối MT5 thất bại, lỗi = {mt5.last_error()}")
+        # Đảm bảo khởi tạo MT5 với các tham số đúng
+        if not mt5.initialize(login=MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER, path=MT5_PATH):
+            self.log(f"Kết nối MT5 thất bại, lỗi = {mt5.last_error()}")
             return False
         self.log("Kết nối MT5 thành công.")
         return True
 
-    def disconnect(self):
+    def disconnect(self) -> None:
         self.log("Ngắt kết nối MT5.")
         mt5.shutdown()
 
-    def get_symbol(self):
-        return self.symbol
+    def get_symbol(self) -> str:
+        # Đảm bảo self.symbol luôn là str
+        return str(self.symbol)
 
-    def get_account_balance(self):
+    def get_account_balance(self) -> float | None:
         """Lấy số dư tài khoản hiện tại."""
         account_info = mt5.account_info()
         if account_info is None:
@@ -42,14 +44,20 @@ class MT5Connector(BaseConnector):
         balance = account_info.balance
         # Phát tín hiệu cập nhật tài khoản
         if self.signals:
-            self.signals.account_summary.emit({'balance': balance, 'pnl': account_info.profit})
-        return balance
+            # account_info.profit có thể không có hoặc là None
+            profit = getattr(account_info, 'profit', 0.0) 
+            self.signals.account_summary.emit({'balance': float(balance), 'pnl': float(profit)})
+        return float(balance)
 
-    def get_symbol_info(self):
+    def get_symbol_info(self) -> object | None: # object vì kiểu của mt5.symbol_info không phải là kiểu Python chuẩn
         """Lấy thông tin chi tiết của symbol."""
-        return mt5.symbol_info(self.symbol)
+        s_info = mt5.symbol_info(self.symbol)
+        if s_info is None:
+            self.log(f"[MT5] Không thể lấy thông tin symbol: {self.symbol}")
+            return None
+        return s_info # MetaTrader5.symbol_info trả về một object có các thuộc tính cần thiết
 
-    def fetch_ohlcv(self, timeframe, limit=100):
+    def fetch_ohlcv(self, timeframe: str, limit: int) -> pd.DataFrame | None:
         try:
             tf_map = {
                 '1m': mt5.TIMEFRAME_M1, '5m': mt5.TIMEFRAME_M5, '15m': mt5.TIMEFRAME_M15,
@@ -62,20 +70,26 @@ class MT5Connector(BaseConnector):
             
             df = pd.DataFrame(rates)
             df['timestamp'] = pd.to_datetime(df['time'], unit='s')
+            df.set_index('timestamp', inplace=True) # Đặt timestamp làm index
             df.rename(columns={'tick_volume': 'volume'}, inplace=True)
-            return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']]
+            return df[['open', 'high', 'low', 'close', 'volume']]
         except Exception as e:
             self.log(f"[MT5] Lỗi khi lấy dữ liệu OHLCV: {e}")
             return None
 
-    def place_order(self, order_type, quantity, sl_price, tp_price):
+    def place_order(self, order_type: str, quantity: float, sl_price: float, tp_price: float) -> str | int | None:
         symbol_info = self.get_symbol_info()
         if symbol_info is None:
             self.log(f"[MT5] Không tìm thấy thông tin symbol: {self.symbol}")
             return None
 
-        point = symbol_info.point
-        price = mt5.symbol_info_tick(self.symbol).ask if order_type == 'long' else mt5.symbol_info_tick(self.symbol).bid
+        # Lấy giá hiện tại
+        tick = mt5.symbol_info_tick(self.symbol)
+        if tick is None:
+            self.log(f"[MT5] Không lấy được tick info cho {self.symbol}")
+            return None
+
+        price = tick.ask if order_type == 'long' else tick.bid
         
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
@@ -85,11 +99,11 @@ class MT5Connector(BaseConnector):
             "price": price,
             "sl": float(sl_price),
             "tp": float(tp_price),
-            "deviation": 20,
+            "deviation": 20, # Deviation trong points
             "magic": 234000,
             "comment": "ICT Bot Order",
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_IOC,
+            "type_filling": mt5.ORDER_FILLING_IOC, # Immediate or Cancel
         }
         
         try:
@@ -106,7 +120,7 @@ class MT5Connector(BaseConnector):
                     'symbol': self.symbol,
                     'side': order_type.upper(),
                     'quantity': quantity,
-                    'entry_price': result.price,
+                    'entry_price': result.price, # Giá thực tế của lệnh
                     'sl': sl_price,
                     'tp': tp_price,
                     'status': 'OPEN'
@@ -116,7 +130,7 @@ class MT5Connector(BaseConnector):
             self.log(f"[MT5] Lỗi khi đặt lệnh: {e}")
             return None
 
-    def get_open_positions(self):
+    def get_open_positions(self) -> bool:
         try:
             positions = mt5.positions_get(symbol=self.symbol)
             if positions is None:
@@ -125,4 +139,3 @@ class MT5Connector(BaseConnector):
         except Exception as e:
             self.log(f"[MT5] Lỗi khi kiểm tra vị thế: {e}")
             return False
-

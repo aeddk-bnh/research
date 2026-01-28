@@ -2,8 +2,14 @@ from .market_structure import get_current_bias, detect_bos_choch, find_swings
 from .pd_arrays import detect_fvg, detect_order_block, get_swing_and_premium_discount
 from .config_loader import TIMEFRAME, TIMEFRAME_SMALLER, RISK_PERCENT_PER_TRADE, STOP_LOSS_POINTS, TAKE_PROFIT_POINTS
 import math
+import pandas as pd # Import pandas
 
-def calculate_sl_tp(entry_price, order_type, point):
+# Định nghĩa một type alias cho BaseConnector để dễ dàng sử dụng type hints
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .connectors.base_connector import BaseConnector
+
+def calculate_sl_tp(entry_price: float, order_type: str, point: float) -> tuple[float | None, float | None]:
     """Tính toán SL/TP dựa trên points."""
     if order_type == 'long':
         sl = entry_price - STOP_LOSS_POINTS * point
@@ -15,7 +21,7 @@ def calculate_sl_tp(entry_price, order_type, point):
         return None, None
     return sl, tp
 
-def calculate_position_size(connector, sl_points, signals=None):
+def calculate_position_size(connector: 'BaseConnector', sl_points: float, signals=None) -> float | None:
     """Tính toán khối lượng giao dịch dựa trên % rủi ro."""
     balance = connector.get_account_balance()
     symbol_info = connector.get_symbol_info()
@@ -28,15 +34,26 @@ def calculate_position_size(connector, sl_points, signals=None):
             print(msg)
         return None
 
+    # Đảm bảo RISK_PERCENT_PER_TRADE là float và lớn hơn 0
+    risk_percent = float(RISK_PERCENT_PER_TRADE) # Đã được ép kiểu trong config_loader
+    if risk_percent <= 0:
+        msg = "Tỷ lệ rủi ro phải lớn hơn 0."
+        if signals:
+            signals.log_message.emit(msg)
+        else:
+            print(msg)
+        return None
+
     # 1. Tính toán rủi ro bằng tiền
-    risk_amount = balance * (RISK_PERCENT_PER_TRADE / 100)
+    risk_amount = balance * (risk_percent / 100)
 
     # 2. Tính toán mức lỗ trên mỗi Lot
-    tick_value = symbol_info.tick_value
-    tick_size = symbol_info.tick_size
+    # Sử dụng getattr để truy cập thuộc tính một cách an toàn
+    tick_value = getattr(symbol_info, 'tick_value', 0.0)
+    tick_size = getattr(symbol_info, 'tick_size', 0.0)
     
     # Giá trị của mỗi point
-    point_value = tick_value / tick_size if tick_size > 0 else 0
+    point_value = tick_value / tick_size if tick_size > 0 else 0.0
     
     # Mức lỗ trên mỗi Lot
     loss_per_lot = sl_points * point_value
@@ -53,19 +70,22 @@ def calculate_position_size(connector, sl_points, signals=None):
     volume = risk_amount / loss_per_lot
     
     # Làm tròn khối lượng về bước khối lượng cho phép của sàn
-    volume_step = symbol_info.volume_step
+    volume_step = getattr(symbol_info, 'volume_step', 0.001)
     volume = math.floor(volume / volume_step) * volume_step
     
     # Kiểm tra khối lượng tối thiểu và tối đa
-    if volume < symbol_info.volume_min:
-        msg = f"Khối lượng tính toán ({volume}) nhỏ hơn mức tối thiểu ({symbol_info.volume_min}). Hủy lệnh."
+    volume_min = getattr(symbol_info, 'volume_min', 0.0)
+    volume_max = getattr(symbol_info, 'volume_max', float('inf'))
+
+    if volume < volume_min:
+        msg = f"Khối lượng tính toán ({volume}) nhỏ hơn mức tối thiểu ({volume_min}). Hủy lệnh."
         if signals:
             signals.log_message.emit(msg)
         else:
             print(msg)
         return None
-    if volume > symbol_info.volume_max:
-        volume = symbol_info.volume_max
+    if volume > volume_max:
+        volume = volume_max
         msg = f"Khối lượng tính toán vượt mức tối đa, sử dụng khối lượng tối đa: {volume}"
         if signals:
             signals.log_message.emit(msg)
@@ -74,7 +94,7 @@ def calculate_position_size(connector, sl_points, signals=None):
 
     return volume
 
-def evaluate_signal(df_main, df_small, signals=None):
+def evaluate_signal(df_main: pd.DataFrame, df_small: pd.DataFrame, signals=None) -> tuple[str, float | None]:
     """
     Đánh giá tín hiệu giao dịch, tích hợp logic Premium/Discount.
     """
@@ -178,7 +198,7 @@ def evaluate_signal(df_main, df_small, signals=None):
 
     return 'none', None
 
-def execute_strategy(connector, signals=None):
+def execute_strategy(connector: 'BaseConnector', signals=None) -> None:
     """Thực thi chiến lược, với khối lượng động."""
     if connector.get_open_positions():
         msg = "Đã có vị thế đang mở. Bỏ qua."
@@ -193,8 +213,13 @@ def execute_strategy(connector, signals=None):
         signals.log_message.emit(msg)
     else:
         print(msg)
-    df_main = connector.fetch_ohlcv(TIMEFRAME, limit=200)
-    df_small = connector.fetch_ohlcv(TIMEFRAME_SMALLER, limit=100)
+    
+    # Đảm bảo TIMEFRAME và TIMEFRAME_SMALLER không phải là None
+    main_timeframe = str(TIMEFRAME) # Đã được ép kiểu trong config_loader
+    small_timeframe = str(TIMEFRAME_SMALLER) # Đã được ép kiểu trong config_loader
+
+    df_main = connector.fetch_ohlcv(main_timeframe, limit=200)
+    df_small = connector.fetch_ohlcv(small_timeframe, limit=100)
 
     if df_main is None or df_small is None: return
 
@@ -216,7 +241,19 @@ def execute_strategy(connector, signals=None):
                 print(msg)
             return
         
-        sl, tp = calculate_sl_tp(entry_price, signal, symbol_info.point)
+        # Đảm bảo symbol_info.point là float
+        point_value = getattr(symbol_info, 'point', 0.00001)
+        
+        # entry_price có thể là None từ evaluate_signal
+        if entry_price is None:
+            msg = "Giá vào lệnh không hợp lệ."
+            if signals:
+                signals.log_message.emit(msg)
+            else:
+                print(msg)
+            return
+
+        sl, tp = calculate_sl_tp(entry_price, signal, point_value)
         
         # Tính toán khối lượng động
         quantity = calculate_position_size(connector, STOP_LOSS_POINTS, signals)
@@ -238,7 +275,17 @@ def execute_strategy(connector, signals=None):
                 })
             else:
                 print(msg)
-            connector.place_order(signal, quantity, sl_price=sl, tp_price=tp)
+            # Chú ý: place_order cần trả về ID lệnh, không phải None.
+            # Và cần xử lý kết quả trả về của place_order.
+            # sl và tp có thể là None từ calculate_sl_tp
+            if sl is not None and tp is not None:
+                connector.place_order(signal, quantity, sl, tp) 
+            else:
+                msg = "SL/TP không hợp lệ. Hủy lệnh."
+                if signals:
+                    signals.log_message.emit(msg)
+                else:
+                    print(msg)
         else:
             msg = "Không thể xác định khối lượng giao dịch. Hủy lệnh."
             if signals:
@@ -251,5 +298,3 @@ def execute_strategy(connector, signals=None):
             signals.log_message.emit(msg)
         else:
             print(msg)
-
-

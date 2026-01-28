@@ -19,12 +19,19 @@ class ConfigManager:
             json.dump(self.config, f, indent=4)
 
     def get(self, key, default=None):
-        """Lấy một giá trị từ cấu hình, hỗ trợ key lồng nhau (e.g., 'mt5.login')."""
+        """
+        Lấy một giá trị từ cấu hình, hỗ trợ key lồng nhau (e.g., 'mt5.login').
+        Luôn trả về giá trị mặc định nếu key không tồn tại hoặc đường dẫn không hợp lệ.
+        """
+        keys = key.split('.')
+        value = self.config
         try:
-            keys = key.split('.')
-            value = self.config
             for k in keys:
-                value = value[k]
+                # Kiểm tra nếu value là dictionary và key tồn tại
+                if isinstance(value, dict) and k in value:
+                    value = value[k]
+                else:
+                    return default # Key không tồn tại hoặc value không phải dict
             return value
         except (KeyError, TypeError):
             return default
