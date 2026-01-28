@@ -7,28 +7,56 @@ def find_swings(df, swing_length=10):
     df['swing_low'] = df['low'].rolling(window=swing_length*2+1, center=True).apply(lambda x: x.iloc[swing_length] if x.iloc[swing_length] == x.min() else np.nan)
     return df
 
-def get_current_bias(df, sma_period=50):
-    """Xác định xu hướng chính dựa trên đường SMA và các swing gần nhất."""
-    df[f'SMA_{sma_period}'] = df['close'].rolling(window=sma_period).mean()
-    
-    last_close = df['close'].iloc[-1]
-    last_sma = df[f'SMA_{sma_period}'].iloc[-1]
-    
-    swing_highs = df['swing_high'].dropna()
-    swing_lows = df['swing_low'].dropna()
-    
-    if swing_highs.empty or swing_lows.empty:
-        return 'neutral'
-        
-    last_swing_high = swing_highs.iloc[-1]
-    last_swing_low = swing_lows.iloc[-1]
+def get_current_bias(df):
+    """
+    Xác định xu hướng chính (bias) dựa trên sự kiện cấu trúc thị trường gần nhất (BOS/CHOCH).
+    """
+    # Đảm bảo cột 'bos' và 'choch' đã tồn tại
+    if 'bos' not in df.columns or 'choch' not in df.columns:
+        return 'neutral' # Không có dữ liệu cấu trúc để phân tích
 
-    if last_close > last_sma and last_close > last_swing_low:
+    # Tìm chỉ số (index) của sự kiện BOS và CHOCH gần nhất
+    last_bos_bullish_idx = df[df['bos'] == 'bullish'].index.max()
+    last_bos_bearish_idx = df[df['bos'] == 'bearish'].index.max()
+    last_choch_bullish_idx = df[df['choch'] == 'bullish'].index.max()
+    last_choch_bearish_idx = df[df['choch'] == 'bearish'].index.max()
+
+    # Tạo một dictionary để lưu các sự kiện và thời gian của chúng
+    events = {
+        'bos_bullish': last_bos_bullish_idx,
+        'bos_bearish': last_bos_bearish_idx,
+        'choch_bullish': last_choch_bullish_idx,
+        'choch_bearish': last_choch_bearish_idx,
+    }
+
+    # Lọc bỏ các sự kiện không xảy ra (giá trị là NaT)
+    valid_events = {name: time for name, time in events.items() if pd.notna(time)}
+
+    if not valid_events:
+        return 'neutral' # Không có sự kiện cấu trúc nào
+
+    # Tìm sự kiện gần nhất bằng cách tìm giá trị thời gian lớn nhất
+    latest_time = max(valid_events.values())
+    latest_event_name = None
+    for name, time in valid_events.items():
+        if time == latest_time:
+            latest_event_name = name
+            break
+
+    # Kiểm tra lại nếu không tìm được tên sự kiện (trường hợp hiếm khi có sự trùng lặp chỉ số)
+    if latest_event_name is None:
+        return 'neutral'
+
+    # Xác định xu hướng dựa trên sự kiện gần nhất
+    if 'bullish' in latest_event_name:
+        print(f"Market Bias: LONG (dựa trên {latest_event_name.replace('_', ' ').upper()})")
         return 'long'
-    elif last_close < last_sma and last_close < last_swing_high:
+    elif 'bearish' in latest_event_name:
+        print(f"Market Bias: SHORT (dựa trên {latest_event_name.replace('_', ' ').upper()})")
         return 'short'
     else:
         return 'neutral'
+
 
 def detect_bos_choch(df):
     """

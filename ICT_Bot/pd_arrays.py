@@ -1,5 +1,7 @@
 import pandas as pd
 import numpy as np
+from market_structure import find_swings
+
 
 def detect_fvg(df):
     """
@@ -26,32 +28,85 @@ def detect_fvg(df):
 def detect_order_block(df):
     """
     Phát hiện Order Block (OB).
-    Bullish OB: nến giảm cuối cùng trước một đợt tăng mạnh.
-    Bearish OB: nến tăng cuối cùng trước một đợt giảm mạnh.
+    Bullish OB: nến giảm cuối cùng trước một đợt tăng mạnh gây ra BOS.
+    Bearish OB: nến tăng cuối cùng trước một đợt giảm mạnh gây ra BOS.
     """
     df['ob_bullish'] = False
     df['ob_bearish'] = False
     df['ob_zone_high'] = np.nan
     df['ob_zone_low'] = np.nan
 
-    for i in range(1, len(df)):
+    for i in range(1, len(df)-3): # -3 để đảm bảo có nến sau để kiểm tra BOS
         # Bullish OB
         if df['close'].iloc[i-1] < df['open'].iloc[i-1] and df['close'].iloc[i] > df['open'].iloc[i]:
             # Nếu nến hiện tại tăng mạnh và nến trước đó giảm
             if (df['close'].iloc[i] - df['open'].iloc[i]) > (df['open'].iloc[i-1] - df['close'].iloc[i-1]):
-                df.loc[df.index[i-1], 'ob_bullish'] = True
-                df.loc[df.index[i-1], 'ob_zone_high'] = df['high'].iloc[i-1]
-                df.loc[df.index[i-1], 'ob_zone_low'] = df['low'].iloc[i-1]
+                # Kiểm tra xem có BOS Bullish trong 3 nến tiếp theo không
+                bos_found = False
+                for j in range(i+1, min(i+4, len(df))): # Kiểm tra 3 nến sau OB
+                    if df['bos'].iloc[j] == 'bullish':
+                        bos_found = True
+                        break
+                
+                if bos_found:
+                    df.loc[df.index[i-1], 'ob_bullish'] = True
+                    df.loc[df.index[i-1], 'ob_zone_high'] = df['high'].iloc[i-1]
+                    df.loc[df.index[i-1], 'ob_zone_low'] = df['low'].iloc[i-1]
         
         # Bearish OB
         if df['close'].iloc[i-1] > df['open'].iloc[i-1] and df['close'].iloc[i] < df['open'].iloc[i]:
              # Nếu nến hiện tại giảm mạnh và nến trước đó tăng
             if (df['open'].iloc[i] - df['close'].iloc[i]) > (df['close'].iloc[i-1] - df['open'].iloc[i-1]):
-                df.loc[df.index[i-1], 'ob_bearish'] = True
-                df.loc[df.index[i-1], 'ob_zone_high'] = df['high'].iloc[i-1]
-                df.loc[df.index[i-1], 'ob_zone_low'] = df['low'].iloc[i-1]
+                # Kiểm tra xem có BOS Bearish trong 3 nến tiếp theo không
+                bos_found = False
+                for j in range(i+1, min(i+4, len(df))): # Kiểm tra 3 nến sau OB
+                    if df['bos'].iloc[j] == 'bearish':
+                        bos_found = True
+                        break
                 
+                if bos_found:
+                    df.loc[df.index[i-1], 'ob_bearish'] = True
+                    df.loc[df.index[i-1], 'ob_zone_high'] = df['high'].iloc[i-1]
+                    df.loc[df.index[i-1], 'ob_zone_low'] = df['low'].iloc[i-1]
+   
     return df
+
+
+def get_swing_and_premium_discount(df, swing_highs, swing_lows):
+    """
+    Xác định con sóng gần nhất và tính toán các vùng Premium/Discount.
+    Trả về một tuple: (swing_high, swing_low, equilibrium).
+    """
+    if swing_highs.empty or swing_lows.empty:
+        return None, None, None
+
+    # Lấy swing high và swing low gần nhất
+    last_swing_high_time = swing_highs.index[-1]
+    last_swing_low_time = swing_lows.index[-1]
+
+    # Xác định con sóng gần nhất dựa trên thời gian
+    if last_swing_high_time > last_swing_low_time:
+        # Con sóng giảm gần nhất (từ đỉnh xuống đáy)
+        swing_high_price = swing_highs.iloc[-1]
+        # Tìm swing low trước swing high này
+        relevant_lows = swing_lows[swing_lows.index < last_swing_high_time]
+        if relevant_lows.empty:
+            return None, None, None
+        swing_low_price = relevant_lows.iloc[-1]
+    else:
+        # Con sóng tăng gần nhất (từ đáy lên đỉnh)
+        swing_low_price = swing_lows.iloc[-1]
+        # Tìm swing high trước swing low này
+        relevant_highs = swing_highs[swing_highs.index < last_swing_low_time]
+        if relevant_highs.empty:
+            return None, None, None
+        swing_high_price = relevant_highs.iloc[-1]
+
+    # Tính toán mức cân bằng (Equilibrium)
+    equilibrium = (swing_high_price + swing_low_price) / 2
+
+    return swing_high_price, swing_low_price, equilibrium
+
 
 def detect_breaker_block(df):
     """

@@ -1,5 +1,5 @@
-from market_structure import get_current_bias, detect_bos_choch
-from pd_arrays import detect_fvg, detect_order_block
+from market_structure import get_current_bias, detect_bos_choch, find_swings
+from pd_arrays import detect_fvg, detect_order_block, get_swing_and_premium_discount
 from config import TIMEFRAME, TIMEFRAME_SMALLER, RISK_PERCENT_PER_TRADE, STOP_LOSS_POINTS, TAKE_PROFIT_POINTS, PLATFORM
 import math
 
@@ -59,21 +59,79 @@ def calculate_position_size(connector, sl_points):
     return volume
 
 def evaluate_signal(df_main, df_small):
-    """Đánh giá tín hiệu giao dịch (logic không đổi)."""
+    """
+    Đánh giá tín hiệu giao dịch, tích hợp logic Premium/Discount.
+    """
+    # 1. Xác định xu hướng chính
     bias = get_current_bias(df_main)
     if bias == 'neutral':
         return 'none', None
+
+    # 2. Xác định con sóng và vùng Premium/Discount
+    df_main_with_swings = find_swings(df_main.copy())
+    swing_highs = df_main_with_swings['swing_high'].dropna()
+    swing_lows = df_main_with_swings['swing_low'].dropna()
+    
+    swing_high, swing_low, equilibrium = get_swing_and_premium_discount(df_main, swing_highs, swing_lows)
+
+    if equilibrium is None:
+        print("Không xác định được con sóng để tính Premium/Discount.")
+        return 'none', None
+        
     latest_price = df_main['close'].iloc[-1]
+
+    # 3. Logic vào lệnh
     if bias == 'long':
-        bullish_ob = df_main[df_main['ob_bullish']].tail(1)
-        if not bullish_ob.empty and abs(latest_price - bullish_ob['ob_zone_low'].iloc[0]) / bullish_ob['ob_zone_low'].iloc[0] < 0.005:
-            if not df_small[df_small['choch'] == 'bullish'].empty:
-                return 'long', latest_price
+        # Điều kiện MUA: Giá phải nằm trong vùng Discount
+        if latest_price > equilibrium:
+            print(f"Giá hiện tại {latest_price} đang ở vùng Premium, không tìm lệnh Mua.")
+            return 'none', None
+            
+        # --- Tìm kiếm tín hiệu từ Order Block ---
+        # Tìm Bullish OB trong vùng Discount
+        bullish_ob_list = df_main[(df_main['ob_bullish']) & (df_main['ob_zone_low'] < equilibrium)]
+        if not bullish_ob_list.empty:
+            bullish_ob = bullish_ob_list.iloc[-1] # Lấy OB gần nhất
+            if abs(latest_price - bullish_ob['ob_zone_low']) / bullish_ob['ob_zone_low'] < 0.005:
+                if not df_small[df_small['choch'] == 'bullish'].empty:
+                    print(f"Tín hiệu MUA từ OB: Giá ({latest_price}) về OB tại vùng Discount và có CHOCH xác nhận.")
+                    return 'long', latest_price
+
+        # --- Tìm kiếm tín hiệu từ Fair Value Gap (FVG) ---
+        bullish_fvg_list = df_main[(df_main['fvg_bullish_low'].notna()) & (df_main['fvg_bullish_low'] < equilibrium)]
+        if not bullish_fvg_list.empty:
+            bullish_fvg = bullish_fvg_list.iloc[-1] # Lấy FVG gần nhất
+            # Kiểm tra giá có đang trong vùng FVG không
+            if bullish_fvg['fvg_bullish_low'] <= latest_price <= bullish_fvg['fvg_bullish_high']:
+                if not df_small[df_small['choch'] == 'bullish'].empty:
+                    print(f"Tín hiệu MUA từ FVG: Giá ({latest_price}) vào FVG tại vùng Discount và có CHOCH xác nhận.")
+                    return 'long', latest_price
+
     elif bias == 'short':
-        bearish_ob = df_main[df_main['ob_bearish']].tail(1)
-        if not bearish_ob.empty and abs(latest_price - bearish_ob['ob_zone_high'].iloc[0]) / bearish_ob['ob_zone_high'].iloc[0] < 0.005:
-            if not df_small[df_small['choch'] == 'bearish'].empty:
-                return 'short', latest_price
+        # Điều kiện BÁN: Giá phải nằm trong vùng Premium
+        if latest_price < equilibrium:
+            print(f"Giá hiện tại {latest_price} đang ở vùng Discount, không tìm lệnh Bán.")
+            return 'none', None
+
+        # --- Tìm kiếm tín hiệu từ Order Block ---
+        bearish_ob_list = df_main[(df_main['ob_bearish']) & (df_main['ob_zone_high'] > equilibrium)]
+        if not bearish_ob_list.empty:
+            bearish_ob = bearish_ob_list.iloc[-1] # Lấy OB gần nhất
+            if abs(latest_price - bearish_ob['ob_zone_high']) / bearish_ob['ob_zone_high'] < 0.005:
+                if not df_small[df_small['choch'] == 'bearish'].empty:
+                    print(f"Tín hiệu BÁN từ OB: Giá ({latest_price}) về OB tại vùng Premium và có CHOCH xác nhận.")
+                    return 'short', latest_price
+        
+        # --- Tìm kiếm tín hiệu từ Fair Value Gap (FVG) ---
+        bearish_fvg_list = df_main[(df_main['fvg_bearish_low'].notna()) & (df_main['fvg_bearish_high'] > equilibrium)]
+        if not bearish_fvg_list.empty:
+            bearish_fvg = bearish_fvg_list.iloc[-1]
+            # Kiểm tra giá có đang trong vùng FVG không
+            if bearish_fvg['fvg_bearish_low'] <= latest_price <= bearish_fvg['fvg_bearish_high']:
+                if not df_small[df_small['choch'] == 'bearish'].empty:
+                    print(f"Tín hiệu BÁN từ FVG: Giá ({latest_price}) vào FVG tại vùng Premium và có CHOCH xác nhận.")
+                    return 'short', latest_price
+
     return 'none', None
 
 def execute_strategy(connector):
@@ -88,10 +146,13 @@ def execute_strategy(connector):
 
     if df_main is None or df_small is None: return
 
-    df_main = detect_bos_choch(detect_order_block(detect_fvg(df_main)))
-    df_small = detect_bos_choch(df_small)
+    # Chạy pipeline phân tích
+    df_with_fvg = detect_fvg(df_main.copy())
+    df_with_bos = detect_bos_choch(df_with_fvg)
+    df_main_analyzed = detect_order_block(df_with_bos)
+    df_small_analyzed = detect_bos_choch(df_small.copy())
     
-    signal, entry_price = evaluate_signal(df_main, df_small)
+    signal, entry_price = evaluate_signal(df_main_analyzed, df_small_analyzed)
 
     if signal != 'none':
         symbol_info = connector.get_symbol_info()
@@ -111,4 +172,5 @@ def execute_strategy(connector):
             print("Không thể xác định khối lượng giao dịch. Hủy lệnh.")
     else:
         print("Không có tín hiệu giao dịch rõ ràng.")
+
 
