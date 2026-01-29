@@ -149,3 +149,28 @@ Tài liệu này tóm tắt toàn bộ quá trình làm việc, từ giai đoạ
     -   Module backtesting đã hoạt động đầy đủ và cung cấp kết quả chính xác, trung thực.
     -   Một bài kiểm tra gần đây cho thấy Lợi nhuận/Thua lỗ âm (Profit Factor ~0.65), điều này xác nhận rằng **engine mô phỏng hoạt động chính xác**, nhưng **các tham số của chiến lược giao dịch cần được tối ưu hóa**.
     -   Dự án hiện có một công cụ mạnh mẽ để lặp lại và cải thiện logic giao dịch một cách có hệ thống.
+
+---
+
+## Giai đoạn 9: Thêm Bộ lọc Premium/Discount và Cơ chế Cooldown
+
+- **Mục tiêu:** Nâng cao chất lượng tín hiệu và quản lý rủi ro bằng cách thêm hai bộ lọc ICT quan trọng: chỉ giao dịch ở vùng giá thuận lợi và tránh giao dịch liên tục sau khi có kết quả.
+
+- **Thực thi:**
+    1.  **Nghiên cứu & Phân tích:**
+        -   Phân tích lại trang `innercircletrader.net` và xác định `Premium/Discount` là thiếu sót cơ bản trong logic hiện tại.
+        -   Phân tích kết quả backtest và phát hiện vấn đề "spam lệnh" khi giá dao động quanh một vùng SL.
+    2.  **Tích hợp Premium/Discount:**
+        -   Tạo các hàm `get_dealing_range` và `is_in_premium_or_discount` trong `market_structure.py` để xác định phạm vi giao dịch và vùng giá hiện tại.
+        -   Cập nhật `evaluate_signal` trong `strategy.py` để chỉ chấp nhận lệnh MUA trong vùng Discount và lệnh BÁN trong vùng Premium.
+    3.  **Tích hợp Cooldown (Thời gian hạ nhiệt):**
+        -   Thêm logic vào `backtester.py` để tạm dừng tìm kiếm tín hiệu trong 30 phút sau khi một lệnh được đóng, giúp ngăn chặn việc vào lệnh liên tiếp thất bại.
+        -   Đồng bộ hóa logic tương tự vào `app/worker.py` (luồng chạy thực tế) để đảm bảo tính nhất quán giữa backtest và live trading.
+    4.  **Kiểm tra và Xác thực:**
+        -   Tạo script `run_backtest_cli.py` để thực hiện backtest nhanh từ dòng lệnh.
+        -   Chạy lại backtest và xác nhận rằng bộ lọc Premium/Discount đã giảm đáng kể số lượng tín hiệu nhiễu, và cơ chế Cooldown đã ngăn chặn hiệu quả việc "spam" lệnh.
+
+- **Kết quả:**
+    -   Bot hiện tại tuân thủ chặt chẽ hơn các quy tắc cốt lõi của ICT.
+    -   Cả backtest và live trading đều được trang bị các biện pháp quản lý rủi ro nâng cao, giúp bot hoạt động an toàn và có chọn lọc hơn.
+    -   Mặc dù kết quả backtest vẫn âm, nền tảng logic đã được củng cố vững chắc, sẵn sàng cho các bước tối ưu hóa tiếp theo về chất lượng tín hiệu.
