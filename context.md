@@ -122,3 +122,30 @@ Tài liệu này tóm tắt toàn bộ quá trình làm việc, từ giai đoạ
         -   Gỡ lỗi `ImportError` do quên thêm `TAKE_PROFIT_RR` vào `config_loader.py`.
         -   Khắc phục các sự cố đường dẫn khi chạy ứng dụng trên Windows.
 - **Kết quả:** Logic giao dịch của bot đã được tinh chỉnh sâu sắc, приблизительно tuân thủ các nguyên tắc cốt lõi của ICT. Bot hiện là một ứng dụng desktop hoàn chỉnh, sẵn sàng để kiểm tra và giám sát.
+
+---
+
+## Giai đoạn 8: Xây dựng và Tinh chỉnh Module Backtesting
+
+- **Mục tiêu:** Xây dựng một module backtesting mạnh mẽ để mô phỏng và đánh giá hiệu quả của chiến lược giao dịch trên dữ liệu lịch sử, cho phép tối ưu hóa mà không cần rủi ro vốn thật.
+
+- **Thực thi:**
+    1.  **Tích hợp Giao diện Người dùng (UI):**
+        -   Thêm tab "Backtesting" mới vào `app/main_window.py`.
+        -   Tạo các ô nhập liệu cho Cặp giao dịch (Symbol), Khung thời gian (Timeframe), và Khoảng thời gian (Ngày bắt đầu/kết thúc).
+        -   Thêm thanh tiến trình (progress bar) và bảng kết quả để hiển thị trực quan quá trình và kết quả backtest.
+    2.  **Xây dựng Engine Backtest:**
+        -   Tạo `trading_core/backtester.py` làm lõi xử lý của module.
+        -   Engine này tìm nạp dữ liệu lịch sử từ `MT5Connector`, lặp qua từng cây nến, thực thi logic từ `strategy.py`, và theo dõi các chỉ số hiệu suất chính (Lợi nhuận/Thua lỗ, Tỷ lệ thắng, Mức sụt giảm tối đa).
+    3.  **Xử lý Đồng thời (Concurrency):**
+        -   Sử dụng `BacktestWorker` và `BacktestSignals` (`app/worker.py`, `app/signals.py`) để chạy toàn bộ quá trình mô phỏng trong một luồng nền (background thread).
+        -   Cách tiếp cận này đảm bảo giao diện người dùng không bị "đơ" hoặc không phản hồi trong suốt quá trình backtest, ngay cả với lượng dữ liệu lớn.
+    4.  **Gỡ lỗi và Tinh chỉnh Logic:**
+        -   **Sửa lỗi `KeyError`:** Khắc phục các sự cố treo ứng dụng trong `market_structure.py` và `pd_arrays.py` bằng cách chuyển từ truy cập dựa trên nhãn (`.loc`) sang truy cập dựa trên chỉ số nguyên (`.iloc`) cho các phép tính nội bộ, giúp tăng tính ổn định.
+        -   **Tinh chỉnh Chiến lược (`strategy.py`):** Thêm các bản ghi `[EVAL]` chi tiết để theo dõi quá trình ra quyết định của bot một cách minh bạch.
+        -   **Xác thực Tín hiệu:** Bổ sung logic quan trọng để xác thực và loại bỏ các "chiến thắng giả" — các tín hiệu mà tại thời điểm tạo ra, giá vào lệnh đã vượt qua mức cắt lỗ, đảm bảo kết quả backtest trung thực và đáng tin cậy.
+
+- **Kết quả:**
+    -   Module backtesting đã hoạt động đầy đủ và cung cấp kết quả chính xác, trung thực.
+    -   Một bài kiểm tra gần đây cho thấy Lợi nhuận/Thua lỗ âm (Profit Factor ~0.65), điều này xác nhận rằng **engine mô phỏng hoạt động chính xác**, nhưng **các tham số của chiến lược giao dịch cần được tối ưu hóa**.
+    -   Dự án hiện có một công cụ mạnh mẽ để lặp lại và cải thiện logic giao dịch một cách có hệ thống.

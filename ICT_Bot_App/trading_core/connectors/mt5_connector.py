@@ -60,6 +60,9 @@ class MT5Connector(BaseConnector):
     def fetch_ohlcv(self, timeframe: str, limit: int) -> pd.DataFrame | None:
         try:
             tf_map = {
+                'M1': mt5.TIMEFRAME_M1, 'M5': mt5.TIMEFRAME_M5, 'M15': mt5.TIMEFRAME_M15,
+                'H1': mt5.TIMEFRAME_H1, 'H4': mt5.TIMEFRAME_H4, 'D1': mt5.TIMEFRAME_D1,
+                # Add old keys for compatibility if needed, but new UI uses the above
                 '1m': mt5.TIMEFRAME_M1, '5m': mt5.TIMEFRAME_M5, '15m': mt5.TIMEFRAME_M15,
                 '1h': mt5.TIMEFRAME_H1, '4h': mt5.TIMEFRAME_H4, '1d': mt5.TIMEFRAME_D1,
             }

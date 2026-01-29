@@ -25,3 +25,13 @@ class WorkerSignals(QObject):
 
     # Tín hiệu kill_zone_status: Gửi một chuỗi (str) để cập nhật trạng thái Kill Zone
     kill_zone_status = Signal(str)
+
+class BacktestSignals(QObject):
+    """
+    Định nghĩa các tín hiệu cho luồng backtesting.
+    """
+    log_message = Signal(str)      # Gửi thông điệp log từ backtester
+    market_bias = Signal(str)      # Tín hiệu market_bias để tương thích với market_structure.py
+    progress = Signal(int)         # Gửi % tiến trình (0-100)
+    trade_closed = Signal(dict)    # Gửi thông tin của một giao dịch đã đóng
+    finished = Signal(dict)        # Gửi kết quả cuối cùng khi hoàn tất

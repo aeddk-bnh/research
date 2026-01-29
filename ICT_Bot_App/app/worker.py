@@ -9,8 +9,9 @@ from trading_core.strategy import execute_strategy
 from trading_core.connectors import get_connector
 
 # Import các thành phần của app
-from app.signals import WorkerSignals
+from app.signals import WorkerSignals, BacktestSignals
 from app.config_manager import config_manager
+from trading_core.backtester import Backtester
 
 class BotWorker(QThread):
     def __init__(self):
@@ -98,3 +99,25 @@ class BotWorker(QThread):
             print("BotWorker không dừng kịp thời, buộc kết thúc.")
             # Không gọi terminate() vì nó không an toàn cho Python
             # Chỉ rely vào cờ _is_running
+
+
+class BacktestWorker(QThread):
+    def __init__(self, params: dict):
+        super().__init__()
+        self.params = params
+        self.signals = BacktestSignals()
+        self._is_running = True
+
+    def run(self):
+        self.signals.log_message.emit("Khởi tạo Backtester...")
+        try:
+            backtester = Backtester(self.params, self.signals)
+            backtester.run()
+        except Exception as e:
+            self.signals.log_message.emit(f"Lỗi nghiêm trọng trong Backtester: {e}")
+            self.signals.log_message.emit(f"Chi tiết: {traceback.format_exc()}")
+        
+        self.signals.log_message.emit("Worker backtest đã hoàn thành.")
+
+    def stop(self):
+        self._is_running = False

@@ -131,25 +131,32 @@ def detect_breaker_block(df):
     df['bb_bullish'] = False
     df['bb_bearish'] = False
 
-    ob_indices = df[df['ob_bullish'] | df['ob_bearish']].index
+    # Lấy danh sách các vị trí integer có OB
+    ob_indices = [i for i in range(len(df)) if df['ob_bullish'].iloc[i] or df['ob_bearish'].iloc[i]]
 
-    for idx in ob_indices:
-        ob_row = df.loc[idx]
+    for i in ob_indices:
+        ob_row = df.iloc[i]
         zone_high = ob_row['ob_zone_high']
         zone_low = ob_row['ob_zone_low']
 
         # Kiểm tra các nến sau OB
-        subset_after_ob = df.loc[idx+1:]
+        # Sử dụng iloc để lấy slice
+        if i + 1 >= len(df):
+            continue
+            
+        subset_after_ob = df.iloc[i+1:]
+        
         if ob_row['ob_bullish']: # Nếu là Bullish OB (hỗ trợ)
             # Tìm nến đầu tiên đóng cửa dưới vùng hỗ trợ
             broken = subset_after_ob[subset_after_ob['close'] < zone_low]
             if not broken.empty:
-                df.loc[idx, 'bb_bearish'] = True # Trở thành Bearish BB
+                # Dùng index gốc (Timestamp) để gán giá trị
+                df.loc[df.index[i], 'bb_bearish'] = True # Trở thành Bearish BB
         
         elif ob_row['ob_bearish']: # Nếu là Bearish OB (kháng cự)
             # Tìm nến đầu tiên đóng cửa trên vùng kháng cự
             broken = subset_after_ob[subset_after_ob['close'] > zone_high]
             if not broken.empty:
-                df.loc[idx, 'bb_bullish'] = True # Trở thành Bullish BB
+                df.loc[df.index[i], 'bb_bullish'] = True # Trở thành Bullish BB
     
     return df

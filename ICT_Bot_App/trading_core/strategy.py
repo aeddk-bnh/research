@@ -69,6 +69,7 @@ def calculate_position_size(connector: 'BaseConnector', sl_price: float, entry_p
 
 def evaluate_signal(df_main: pd.DataFrame, df_small: pd.DataFrame, signals=None) -> tuple[str, float | None, float | None]:
     bias = get_current_bias(df_main, signals)
+    if signals: signals.log_message.emit(f"[EVAL] Bias: {bias}")
     if bias == 'neutral':
         return 'none', None, None
 
@@ -80,79 +81,190 @@ def evaluate_signal(df_main: pd.DataFrame, df_small: pd.DataFrame, signals=None)
 
     if equilibrium is None:
         msg = "Không xác định được con sóng để tính Premium/Discount."
-        if signals: signals.log_message.emit(msg)
+        if signals: signals.log_message.emit(f"[EVAL] {msg}")
         else: print(msg)
         return 'none', None, None
         
-    latest_price = df_main['close'].iloc[-1]
+    latest_close = df_main['close'].iloc[-1]
+    latest_high = df_main['high'].iloc[-1]
+    latest_low = df_main['low'].iloc[-1]
+    
+    if signals: signals.log_message.emit(f"[EVAL] Price: C={latest_close:.4f} H={latest_high:.4f} L={latest_low:.4f}, Eq={equilibrium:.4f}")
 
     if bias == 'long':
-        if latest_price > equilibrium:
+        if latest_close > equilibrium:
+            if signals: signals.log_message.emit("[EVAL] Price is in Premium zone for a LONG setup. Skipping.")
             return 'none', None, None
             
+        if signals: signals.log_message.emit("[EVAL] Price in Discount zone. Looking for Bullish PD Arrays...")
+        
         # --- Order Block ---
         bullish_ob_list = df_main[(df_main['ob_bullish']) & (df_main['ob_zone_low'] < equilibrium)]
         if not bullish_ob_list.empty:
+            if signals: signals.log_message.emit("[EVAL] Found potential Bullish OB.")
             bullish_ob = bullish_ob_list.iloc[-1]
-            if abs(latest_price - bullish_ob['ob_zone_high']) / bullish_ob['ob_zone_high'] < 0.005: # Test the top of the OB
+            
+            # Check if Low touches the OB zone
+            if latest_low <= bullish_ob['ob_zone_high']:
+                if signals: signals.log_message.emit(f"[EVAL] Price (Low={latest_low}) touched Bullish OB (High={bullish_ob['ob_zone_high']}). Checking for LTF CHOCH...")
                 recent_choch = df_small[df_small['choch'] == 'bullish'].tail(1)
-                if not recent_choch.empty and recent_choch.index[0] >= df_small.index[-5]:
+                
+                # Nới lỏng điều kiện thời gian CHOCH: từ 5 nến lên 20 nến
+                choch_lookback = 20 
+                if not recent_choch.empty and recent_choch.index[0] >= df_small.index[-choch_lookback]:
+                    if signals: signals.log_message.emit("[EVAL] SUCCESS: Recent LTF Bullish CHOCH found! Firing LONG signal.")
                     sl_price = bullish_ob['ob_zone_low']
-                    return 'long', latest_price, sl_price
+                    
+                    if latest_close <= sl_price:
+                        if signals: signals.log_message.emit(f"[EVAL] INVALID: Price ({latest_close:.5f}) <= SL ({sl_price:.5f}). Too late to enter.")
+                        return 'none', None, None
+                        
+                    return 'long', latest_close, sl_price
+                elif signals:
+                    if recent_choch.empty:
+                        signals.log_message.emit("[EVAL] FAILED: No recent LTF Bullish CHOCH found.")
+                    else:
+                        signals.log_message.emit(f"[EVAL] FAILED: LTF Bullish CHOCH is too old. (Found at {recent_choch.index[0]}, need >= {df_small.index[-choch_lookback]})")
 
         # --- Fair Value Gap (FVG) ---
         bullish_fvg_list = df_main[(df_main['fvg_bullish_low'].notna()) & (df_main['fvg_bullish_low'] < equilibrium)]
         if not bullish_fvg_list.empty:
+            if signals: signals.log_message.emit("[EVAL] Found potential Bullish FVG.")
             bullish_fvg = bullish_fvg_list.iloc[-1]
-            if bullish_fvg['fvg_bullish_low'] <= latest_price <= bullish_fvg['fvg_bullish_high']:
+            
+            # Check if Low enters the FVG zone
+            if latest_low <= bullish_fvg['fvg_bullish_high'] and latest_high >= bullish_fvg['fvg_bullish_low']:
+                if signals: signals.log_message.emit(f"[EVAL] Price (Low={latest_low}) touched Bullish FVG ({bullish_fvg['fvg_bullish_low']}-{bullish_fvg['fvg_bullish_high']}). Checking for LTF CHOCH...")
                 recent_choch = df_small[df_small['choch'] == 'bullish'].tail(1)
-                if not recent_choch.empty and recent_choch.index[0] >= df_small.index[-5]:
+                
+                choch_lookback = 20
+                if not recent_choch.empty and recent_choch.index[0] >= df_small.index[-choch_lookback]:
+                    if signals: signals.log_message.emit("[EVAL] SUCCESS: Recent LTF Bullish CHOCH found! Firing LONG signal.")
                     sl_price = bullish_fvg['fvg_bullish_low']
-                    return 'long', latest_price, sl_price
+                    
+                    if latest_close <= sl_price:
+                        if signals: signals.log_message.emit(f"[EVAL] INVALID: Price ({latest_close:.5f}) <= SL ({sl_price:.5f}). Too late to enter.")
+                        return 'none', None, None
+
+                    return 'long', latest_close, sl_price
+                elif signals:
+                    if recent_choch.empty:
+                        signals.log_message.emit("[EVAL] FAILED: No recent LTF Bullish CHOCH found.")
+                    else:
+                        signals.log_message.emit(f"[EVAL] FAILED: LTF Bullish CHOCH is too old. (Found at {recent_choch.index[0]}, need >= {df_small.index[-choch_lookback]})")
 
         # --- Breaker Block (BB) ---
         bullish_bb_list = df_main[(df_main['bb_bullish']) & (df_main['ob_zone_low'] < equilibrium)]
         if not bullish_bb_list.empty:
+            if signals: signals.log_message.emit("[EVAL] Found potential Bullish BB.")
             bullish_bb = bullish_bb_list.iloc[-1]
-            if abs(latest_price - bullish_bb['ob_zone_high']) / bullish_bb['ob_zone_high'] < 0.005:
+            
+            if latest_low <= bullish_bb['ob_zone_high']:
+                if signals: signals.log_message.emit(f"[EVAL] Price touched Bullish BB. Checking for LTF CHOCH...")
                 recent_choch = df_small[df_small['choch'] == 'bullish'].tail(1)
-                if not recent_choch.empty and recent_choch.index[0] >= df_small.index[-5]:
+                
+                choch_lookback = 20
+                if not recent_choch.empty and recent_choch.index[0] >= df_small.index[-choch_lookback]:
+                    if signals: signals.log_message.emit("[EVAL] SUCCESS: Recent LTF Bullish CHOCH found! Firing LONG signal.")
                     sl_price = bullish_bb['ob_zone_low']
-                    return 'long', latest_price, sl_price
+                    
+                    if latest_close <= sl_price:
+                        if signals: signals.log_message.emit(f"[EVAL] INVALID: Price ({latest_close:.5f}) <= SL ({sl_price:.5f}). Too late to enter.")
+                        return 'none', None, None
+
+                    return 'long', latest_close, sl_price
+                elif signals:
+                    if recent_choch.empty:
+                        signals.log_message.emit("[EVAL] FAILED: No recent LTF Bullish CHOCH found.")
+                    else:
+                        signals.log_message.emit(f"[EVAL] FAILED: LTF Bullish CHOCH is too old. (Found at {recent_choch.index[0]}, need >= {df_small.index[-choch_lookback]})")
 
     elif bias == 'short':
-        if latest_price < equilibrium:
+        if latest_close < equilibrium:
+            if signals: signals.log_message.emit("[EVAL] Price is in Discount zone for a SHORT setup. Skipping.")
             return 'none', None, None
+
+        if signals: signals.log_message.emit("[EVAL] Price in Premium zone. Looking for Bearish PD Arrays...")
 
         # --- Order Block ---
         bearish_ob_list = df_main[(df_main['ob_bearish']) & (df_main['ob_zone_high'] > equilibrium)]
         if not bearish_ob_list.empty:
+            if signals: signals.log_message.emit("[EVAL] Found potential Bearish OB.")
             bearish_ob = bearish_ob_list.iloc[-1]
-            if abs(latest_price - bearish_ob['ob_zone_low']) / bearish_ob['ob_zone_low'] < 0.005:
+            
+            # Check if High touches the OB zone
+            if latest_high >= bearish_ob['ob_zone_low']:
+                if signals: signals.log_message.emit(f"[EVAL] Price (High={latest_high}) touched Bearish OB (Low={bearish_ob['ob_zone_low']}). Checking for LTF CHOCH...")
                 recent_choch = df_small[df_small['choch'] == 'bearish'].tail(1)
-                if not recent_choch.empty and recent_choch.index[0] >= df_small.index[-5]:
+                
+                choch_lookback = 20
+                if not recent_choch.empty and recent_choch.index[0] >= df_small.index[-choch_lookback]:
+                    if signals: signals.log_message.emit("[EVAL] SUCCESS: Recent LTF Bearish CHOCH found! Firing SHORT signal.")
                     sl_price = bearish_ob['ob_zone_high']
-                    return 'short', latest_price, sl_price
+                    
+                    if latest_close >= sl_price:
+                        if signals: signals.log_message.emit(f"[EVAL] INVALID: Price ({latest_close:.5f}) >= SL ({sl_price:.5f}). Too late to enter.")
+                        return 'none', None, None
+
+                    return 'short', latest_close, sl_price
+                elif signals:
+                    if recent_choch.empty:
+                        signals.log_message.emit("[EVAL] FAILED: No recent LTF Bearish CHOCH found.")
+                    else:
+                        signals.log_message.emit(f"[EVAL] FAILED: LTF Bearish CHOCH is too old. (Found at {recent_choch.index[0]}, need >= {df_small.index[-choch_lookback]})")
         
         # --- Fair Value Gap (FVG) ---
         bearish_fvg_list = df_main[(df_main['fvg_bearish_low'].notna()) & (df_main['fvg_bearish_high'] > equilibrium)]
         if not bearish_fvg_list.empty:
+            if signals: signals.log_message.emit("[EVAL] Found potential Bearish FVG.")
             bearish_fvg = bearish_fvg_list.iloc[-1]
-            if bearish_fvg['fvg_bearish_low'] <= latest_price <= bearish_fvg['fvg_bearish_high']:
+            
+            # Check if High enters the FVG zone
+            if latest_high >= bearish_fvg['fvg_bearish_low'] and latest_low <= bearish_fvg['fvg_bearish_high']:
+                if signals: signals.log_message.emit(f"[EVAL] Price (High={latest_high}) touched Bearish FVG ({bearish_fvg['fvg_bearish_low']}-{bearish_fvg['fvg_bearish_high']}). Checking for LTF CHOCH...")
                 recent_choch = df_small[df_small['choch'] == 'bearish'].tail(1)
-                if not recent_choch.empty and recent_choch.index[0] >= df_small.index[-5]:
+                
+                choch_lookback = 20
+                if not recent_choch.empty and recent_choch.index[0] >= df_small.index[-choch_lookback]:
+                    if signals: signals.log_message.emit("[EVAL] SUCCESS: Recent LTF Bearish CHOCH found! Firing SHORT signal.")
                     sl_price = bearish_fvg['fvg_bearish_high']
-                    return 'short', latest_price, sl_price
+                    
+                    if latest_close >= sl_price:
+                        if signals: signals.log_message.emit(f"[EVAL] INVALID: Price ({latest_close:.5f}) >= SL ({sl_price:.5f}). Too late to enter.")
+                        return 'none', None, None
+
+                    return 'short', latest_close, sl_price
+                elif signals:
+                    if recent_choch.empty:
+                        signals.log_message.emit("[EVAL] FAILED: No recent LTF Bearish CHOCH found.")
+                    else:
+                        signals.log_message.emit(f"[EVAL] FAILED: LTF Bearish CHOCH is too old. (Found at {recent_choch.index[0]}, need >= {df_small.index[-choch_lookback]})")
 
         # --- Breaker Block (BB) ---
         bearish_bb_list = df_main[(df_main['bb_bearish']) & (df_main['ob_zone_high'] > equilibrium)]
         if not bearish_bb_list.empty:
+            if signals: signals.log_message.emit("[EVAL] Found potential Bearish BB.")
             bearish_bb = bearish_bb_list.iloc[-1]
-            if abs(latest_price - bearish_bb['ob_zone_low']) / bearish_bb['ob_zone_low'] < 0.005:
+            
+            if latest_high >= bearish_bb['ob_zone_low']:
+                if signals: signals.log_message.emit(f"[EVAL] Price touched Bearish BB. Checking for LTF CHOCH...")
                 recent_choch = df_small[df_small['choch'] == 'bearish'].tail(1)
-                if not recent_choch.empty and recent_choch.index[0] >= df_small.index[-5]:
+                
+                choch_lookback = 20
+                if not recent_choch.empty and recent_choch.index[0] >= df_small.index[-choch_lookback]:
+                    if signals: signals.log_message.emit("[EVAL] SUCCESS: Recent LTF Bearish CHOCH found! Firing SHORT signal.")
                     sl_price = bearish_bb['ob_zone_high']
-                    return 'short', latest_price, sl_price
+                    
+                    if latest_close >= sl_price:
+                        if signals: signals.log_message.emit(f"[EVAL] INVALID: Price ({latest_close:.5f}) >= SL ({sl_price:.5f}). Too late to enter.")
+                        return 'none', None, None
+
+                    return 'short', latest_close, sl_price
+                elif signals:
+                    if recent_choch.empty:
+                        signals.log_message.emit("[EVAL] FAILED: No recent LTF Bearish CHOCH found.")
+                    else:
+                        signals.log_message.emit(f"[EVAL] FAILED: LTF Bearish CHOCH is too old. (Found at {recent_choch.index[0]}, need >= {df_small.index[-choch_lookback]})")
 
     return 'none', None, None
 
@@ -177,10 +289,12 @@ def execute_strategy(connector: 'BaseConnector', signals=None) -> None:
 
     # Analysis pipeline
     df_with_fvg = detect_fvg(df_main.copy())
-    df_with_bos = detect_bos_choch(df_with_fvg)
+    df_with_swings = find_swings(df_with_fvg)
+    df_with_bos = detect_bos_choch(df_with_swings)
     df_with_ob = detect_order_block(df_with_bos)
     df_main_analyzed = detect_breaker_block(df_with_ob)
-    df_small_analyzed = detect_bos_choch(df_small.copy())
+    df_small_swings = find_swings(df_small.copy())
+    df_small_analyzed = detect_bos_choch(df_small_swings)
     
     signal, entry_price, sl_price = evaluate_signal(df_main_analyzed, df_small_analyzed, signals)
 

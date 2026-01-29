@@ -88,7 +88,7 @@ def detect_liquidity_sweep(df, index, lookback=15):
     if index < lookback:
         return 'none'
 
-    candle = df.loc[index]
+    candle = df.iloc[index]
     lookback_df = df.iloc[max(0, index - lookback):index]
 
     # Bullish Sweep Check (quét đáy)

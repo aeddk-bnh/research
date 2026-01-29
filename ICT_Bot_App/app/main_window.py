@@ -2,12 +2,13 @@ import sys
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
     QPushButton, QLabel, QTextEdit, QTableWidget, QTableWidgetItem, QHeaderView,
-    QFormLayout, QLineEdit, QDoubleSpinBox, QComboBox, QGroupBox, QMessageBox
+    QFormLayout, QLineEdit, QDoubleSpinBox, QComboBox, QGroupBox, QMessageBox,
+    QDateEdit, QProgressBar
 )
-from PySide6.QtCore import QTimer, QThread # Import QThread
+from PySide6.QtCore import QTimer, QThread, QDate # Import QThread
 from PySide6.QtGui import QCloseEvent
 
-from app.worker import BotWorker
+from app.worker import BotWorker, BacktestWorker
 from app.config_manager import config_manager
 from trading_core.time_filter import get_kill_zone_status
 
@@ -39,11 +40,13 @@ class MainWindow(QMainWindow):
         self.config_tab = self.create_config_tab()
         self.log_tab = self.create_log_tab()
         self.trades_tab = self.create_trades_tab()
+        self.backtesting_tab = self.create_backtesting_tab()
 
         self.tabs.addTab(self.dashboard_tab, "Dashboard")
         self.tabs.addTab(self.config_tab, "Cấu hình")
         self.tabs.addTab(self.log_tab, "Nhật ký")
         self.tabs.addTab(self.trades_tab, "Giao dịch")
+        self.tabs.addTab(self.backtesting_tab, "Backtesting")
 
         # Initialize worker and connect signals
         self.worker = BotWorker()
@@ -421,3 +424,121 @@ class MainWindow(QMainWindow):
         }
         
         self.update_history_table(position_id, closed_data)
+
+    def create_backtesting_tab(self):
+        widget = QWidget()
+        main_layout = QHBoxLayout(widget)
+
+        # Left side: Configuration
+        config_group = QGroupBox("Cấu hình Backtest")
+        config_layout = QFormLayout(config_group)
+
+        self.bt_symbol_input = QLineEdit(config_manager.get('mt5.symbol', 'BTCUSDm'))
+        self.bt_timeframe_combo = QComboBox()
+        self.bt_timeframe_combo.addItems(['M1', 'M5', 'M15', 'H1', 'H4', 'D1'])
+        self.bt_timeframe_combo.setCurrentText(config_manager.get('trading.timeframe', 'H1'))
+        
+        self.bt_start_date_edit = QDateEdit(QDate.currentDate().addMonths(-1))
+        self.bt_start_date_edit.setCalendarPopup(True)
+        self.bt_end_date_edit = QDateEdit(QDate.currentDate())
+        self.bt_end_date_edit.setCalendarPopup(True)
+
+        self.bt_start_button = QPushButton("Bắt đầu Backtest")
+        self.bt_start_button.clicked.connect(self.start_backtest)
+
+        config_layout.addRow("Symbol:", self.bt_symbol_input)
+        config_layout.addRow("Timeframe:", self.bt_timeframe_combo)
+        config_layout.addRow("Từ ngày:", self.bt_start_date_edit)
+        config_layout.addRow("Đến ngày:", self.bt_end_date_edit)
+        config_layout.addRow(self.bt_start_button)
+
+        # Right side: Results
+        results_group = QGroupBox("Kết quả")
+        results_layout = QVBoxLayout(results_group)
+
+        # Progress bar
+        self.bt_progress_bar = QProgressBar()
+        self.bt_progress_bar.setValue(0)
+        results_layout.addWidget(self.bt_progress_bar)
+        
+        # Summary
+        summary_layout = QFormLayout()
+        self.bt_pnl_label = QLabel("$0.00")
+        self.bt_winrate_label = QLabel("0%")
+        self.bt_profit_factor_label = QLabel("N/A")
+        self.bt_max_drawdown_label = QLabel("0%")
+        summary_layout.addRow("Tổng P/L:", self.bt_pnl_label)
+        summary_layout.addRow("Tỷ lệ thắng:", self.bt_winrate_label)
+        summary_layout.addRow("Profit Factor:", self.bt_profit_factor_label)
+        summary_layout.addRow("Max Drawdown:", self.bt_max_drawdown_label)
+        results_layout.addLayout(summary_layout)
+
+        # Trades table
+        self.bt_trades_table = QTableWidget()
+        self.bt_trades_table.setColumnCount(8)
+        self.bt_trades_table.setHorizontalHeaderLabels(
+            ["Thời gian vào", "Loại", "Giá vào", "Giá đóng", "SL", "TP", "P/L", "Lý do đóng"]
+        )
+        results_layout.addWidget(self.bt_trades_table)
+
+        main_layout.addWidget(config_group, 1) # 1 part of the width
+        main_layout.addWidget(results_group, 3) # 3 parts of the width
+        
+        return widget
+
+    def start_backtest(self):
+        self.append_to_log("Chuẩn bị bắt đầu backtest...")
+        
+        # Disable button
+        self.bt_start_button.setEnabled(False)
+        self.bt_start_button.setText("Đang chạy...")
+        
+        # Reset UI
+        self.bt_progress_bar.setValue(0)
+        self.bt_pnl_label.setText("$0.00")
+        self.bt_winrate_label.setText("0%")
+        self.bt_profit_factor_label.setText("N/A")
+        self.bt_max_drawdown_label.setText("0%")
+        self.bt_trades_table.setRowCount(0)
+        
+        params = {
+            'symbol': self.bt_symbol_input.text(),
+            'timeframe': self.bt_timeframe_combo.currentText(),
+            'start_date': self.bt_start_date_edit.date().toPython(),
+            'end_date': self.bt_end_date_edit.date().toPython(),
+        }
+        
+        self.backtest_worker = BacktestWorker(params)
+        self.backtest_worker.signals.log_message.connect(self.append_to_log)
+        self.backtest_worker.signals.progress.connect(self.update_backtest_progress)
+        self.backtest_worker.signals.trade_closed.connect(self.add_backtest_trade)
+        self.backtest_worker.signals.finished.connect(self.finish_backtest)
+        
+        self.backtest_worker.start()
+
+    def update_backtest_progress(self, value):
+        self.bt_progress_bar.setValue(value)
+
+    def add_backtest_trade(self, trade_data):
+        row = self.bt_trades_table.rowCount()
+        self.bt_trades_table.insertRow(row)
+        
+        self.bt_trades_table.setItem(row, 0, QTableWidgetItem(trade_data.get('entry_time', '')))
+        self.bt_trades_table.setItem(row, 1, QTableWidgetItem(trade_data.get('side', '')))
+        self.bt_trades_table.setItem(row, 2, QTableWidgetItem(f"{trade_data.get('entry_price', 0):.5f}"))
+        self.bt_trades_table.setItem(row, 3, QTableWidgetItem(f"{trade_data.get('exit_price', 0):.5f}"))
+        self.bt_trades_table.setItem(row, 4, QTableWidgetItem(f"{trade_data.get('sl', 0):.5f}"))
+        self.bt_trades_table.setItem(row, 5, QTableWidgetItem(f"{trade_data.get('tp', 0):.5f}"))
+        self.bt_trades_table.setItem(row, 6, QTableWidgetItem(f"{trade_data.get('pnl', 0):.2f}"))
+        self.bt_trades_table.setItem(row, 7, QTableWidgetItem(trade_data.get('close_reason', '')))
+
+    def finish_backtest(self, results):
+        self.append_to_log("Backtest hoàn tất!")
+        self.bt_start_button.setEnabled(True)
+        self.bt_start_button.setText("Bắt đầu Backtest")
+        self.bt_progress_bar.setValue(100)
+        
+        self.bt_pnl_label.setText(f"${results.get('total_pnl', 0):.2f}")
+        self.bt_winrate_label.setText(f"{results.get('win_rate', 0):.2f}%")
+        self.bt_profit_factor_label.setText(f"{results.get('profit_factor', 'N/A')}")
+        self.bt_max_drawdown_label.setText(f"{results.get('max_drawdown', 0):.2f}%")
