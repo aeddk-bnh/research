@@ -36,6 +36,18 @@ ENABLE_LOGGING = False # Tắt log để tăng tốc độ backtest
 # --- Cấu hình Chiến lược Nâng cao ---
 SL_BUFFER_POINTS = _safe_float(config_manager.get('trading.sl_buffer_points', 50.0), 50.0) # Đơn vị: points
 
+# --- Cấu hình OTE (Optimal Trade Entry) ---
+OTE_ENABLED = config_manager.get('trading.ote_enabled', True)  # Bật/tắt OTE filter
+OTE_LEVEL_PRIMARY = _safe_float(config_manager.get('trading.ote_level_primary', 0.705), 0.705)  # Mức OTE chính (70.5%)
+
+# --- Cấu hình Partial Profits ---
+PARTIAL_PROFITS_ENABLED = config_manager.get('trading.partial_profits_enabled', False)  # Bật/tắt chốt lời từng phần
+PARTIAL_TP1_PERCENT = _safe_float(config_manager.get('trading.partial_tp1_percent', 50.0), 50.0)  # % đóng tại TP1
+PARTIAL_TP1_RR = _safe_float(config_manager.get('trading.partial_tp1_rr', 1.0), 1.0)  # R:R cho TP1
+PARTIAL_TP2_PERCENT = _safe_float(config_manager.get('trading.partial_tp2_percent', 25.0), 25.0)  # % đóng tại TP2
+PARTIAL_TP2_RR = _safe_float(config_manager.get('trading.partial_tp2_rr', 2.0), 2.0)  # R:R cho TP2
+PARTIAL_TP3_RR = _safe_float(config_manager.get('trading.partial_tp3_rr', 3.0), 3.0)  # R:R cho TP3 (25% còn lại)
+
 # --- Cấu hình Nền tảng ---
 PLATFORM = str(config_manager.get('platform', 'mt5'))
 

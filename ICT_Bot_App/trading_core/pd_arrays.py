@@ -2,6 +2,10 @@ import pandas as pd
 import numpy as np
 from .market_structure import find_swings, detect_liquidity_sweep
 
+# Displacement threshold: % of average candle range để xác định "strong move"
+DISPLACEMENT_THRESHOLD = 1.5  # 150% of average range = displacement
+
+
 def detect_fvg(df):
     """
     Phát hiện Fair Value Gap (FVG).
@@ -24,18 +28,79 @@ def detect_fvg(df):
 
     return df
 
+
+def check_displacement(df, start_idx: int, direction: str, lookforward: int = 3) -> bool:
+    """
+    Kiểm tra xem có Displacement (sự dịch chuyển mạnh) sau một nến không.
+    
+    ICT Displacement:
+    - Một hoặc nhiều nến có body lớn hơn bình thường
+    - Tạo ra FVG hoặc có range lớn hơn 150% average
+    
+    Args:
+        df: DataFrame
+        start_idx: Index bắt đầu kiểm tra (nến OB)
+        direction: 'bullish' hoặc 'bearish'
+        lookforward: Số nến nhìn về phía trước để check
+    
+    Returns:
+        bool: True nếu có displacement
+    """
+    if start_idx + lookforward >= len(df):
+        return False
+    
+    # Tính average range của 20 nến trước
+    lookback = min(20, start_idx)
+    if lookback < 5:
+        return True  # Không đủ data để check, bỏ qua
+    
+    avg_range = (df['high'].iloc[start_idx-lookback:start_idx] - 
+                 df['low'].iloc[start_idx-lookback:start_idx]).mean()
+    
+    if avg_range <= 0:
+        return True
+    
+    # Check các nến sau OB
+    for j in range(start_idx + 1, min(start_idx + lookforward + 1, len(df))):
+        candle_range = df['high'].iloc[j] - df['low'].iloc[j]
+        candle_body = abs(df['close'].iloc[j] - df['open'].iloc[j])
+        
+        # Displacement check: range hoặc body phải lớn hơn threshold
+        if candle_range > avg_range * DISPLACEMENT_THRESHOLD:
+            # Kiểm tra direction
+            if direction == 'bullish' and df['close'].iloc[j] > df['open'].iloc[j]:
+                return True
+            elif direction == 'bearish' and df['close'].iloc[j] < df['open'].iloc[j]:
+                return True
+        
+        # Hoặc body lớn (strong conviction)
+        if candle_body > avg_range * DISPLACEMENT_THRESHOLD:
+            if direction == 'bullish' and df['close'].iloc[j] > df['open'].iloc[j]:
+                return True
+            elif direction == 'bearish' and df['close'].iloc[j] < df['open'].iloc[j]:
+                return True
+    
+    return False
+
 def detect_order_block(df):
     """
     Phát hiện Order Block (OB) với các điều kiện ICT nâng cao.
-    1. Liquidity Sweep: Quét thanh khoản đỉnh/đáy trước.
-    2. BOS: Gây ra phá vỡ cấu trúc.
-    3. Imbalance (Mới): Phải tạo ra FVG ngay sau đó.
+    
+    ICT Order Block Requirements:
+    1. Nến ngược chiều (down candle cho bullish OB, up candle cho bearish OB)
+    2. BOS: Gây ra phá vỡ cấu trúc trong 5 nến tiếp theo
+    3. Imbalance: Phải tạo ra FVG trong 3 nến tiếp theo
+    4. Displacement: Phải có sự dịch chuyển mạnh (nến lớn bất thường)
+    
+    Optional (đã bỏ requirement bắt buộc):
+    - Liquidity Sweep: Quét thanh khoản đỉnh/đáy trước
     """
     df['ob_bullish'] = False
     df['ob_bearish'] = False
     df['ob_zone_high'] = np.nan
     df['ob_zone_low'] = np.nan
     df['liquidity_sweep'] = 'none'
+    df['has_displacement'] = False
 
     # Đảm bảo đã có FVG
     if 'fvg_bullish_high' not in df.columns:
@@ -45,58 +110,65 @@ def detect_order_block(df):
 
     for i in range(15, len(df_with_swings)-5): 
         
-        # 1. KIỂM TRA LIQUIDITY SWEEP
+        # 1. KIỂM TRA LIQUIDITY SWEEP (optional, chỉ để tracking)
         sweep_type = detect_liquidity_sweep(df_with_swings, i)
         df.loc[df.index[i], 'liquidity_sweep'] = sweep_type
 
-        # 2. XÁC ĐỊNH OB VÀ KIỂM TRA BOS + IMBALANCE
+        # 2. XÁC ĐỊNH OB VÀ KIỂM TRA BOS + IMBALANCE + DISPLACEMENT
         
         # --- Bullish OB ---
-        # Chỉ cần là nến giảm (hoặc nến cuối cùng) trước đợt tăng mạnh
+        # Phải là nến giảm (down candle) trước đợt tăng mạnh
         if df_with_swings['close'].iloc[i] < df_with_swings['open'].iloc[i]:
             # Điều kiện a: Có BOS Bullish trong 5 nến tới?
             bos_found = False
-            for j in range(i + 1, i + 6):
-                # Kiểm tra cột 'bos' nếu nó tồn tại
+            for j in range(i + 1, min(i + 6, len(df_with_swings))):
                 if 'bos' in df_with_swings.columns and df_with_swings['bos'].iloc[j] == 'bullish':
                     bos_found = True
                     break
             
             # Điều kiện b: Có FVG Bullish trong 3 nến tới?
             fvg_found = False
-            for k in range(i + 1, i + 4):
+            for k in range(i + 1, min(i + 4, len(df_with_swings))):
                 if pd.notna(df_with_swings['fvg_bullish_high'].iloc[k]):
                     fvg_found = True
                     break
 
-            # Logic mới: Chỉ cần BOS + FVG là đủ điều kiện OB
-            if bos_found and fvg_found:
+            # Điều kiện c: Có Displacement (sự dịch chuyển mạnh)?
+            has_displacement = check_displacement(df_with_swings, i, 'bullish')
+
+            # Logic: BOS + FVG + Displacement = Valid OB
+            if bos_found and fvg_found and has_displacement:
                 df.loc[df.index[i], 'ob_bullish'] = True
                 df.loc[df.index[i], 'ob_zone_high'] = df_with_swings['high'].iloc[i]
                 df.loc[df.index[i], 'ob_zone_low'] = df_with_swings['low'].iloc[i]
+                df.loc[df.index[i], 'has_displacement'] = True
 
         # --- Bearish OB ---
-        # Chỉ cần là nến tăng trước đợt giảm mạnh
+        # Phải là nến tăng (up candle) trước đợt giảm mạnh
         elif df_with_swings['close'].iloc[i] > df_with_swings['open'].iloc[i]:
             # Điều kiện a: Có BOS Bearish trong 5 nến tới?
             bos_found = False
-            for j in range(i + 1, i + 6):
+            for j in range(i + 1, min(i + 6, len(df_with_swings))):
                 if 'bos' in df_with_swings.columns and df_with_swings['bos'].iloc[j] == 'bearish':
                     bos_found = True
                     break
             
             # Điều kiện b: Có FVG Bearish trong 3 nến tới?
             fvg_found = False
-            for k in range(i + 1, i + 4):
+            for k in range(i + 1, min(i + 4, len(df_with_swings))):
                 if pd.notna(df_with_swings['fvg_bearish_high'].iloc[k]):
                     fvg_found = True
                     break
 
-            # Logic mới: Chỉ cần BOS + FVG là đủ điều kiện OB
-            if bos_found and fvg_found:
+            # Điều kiện c: Có Displacement?
+            has_displacement = check_displacement(df_with_swings, i, 'bearish')
+
+            # Logic: BOS + FVG + Displacement = Valid OB
+            if bos_found and fvg_found and has_displacement:
                 df.loc[df.index[i], 'ob_bearish'] = True
                 df.loc[df.index[i], 'ob_zone_high'] = df_with_swings['high'].iloc[i]
                 df.loc[df.index[i], 'ob_zone_low'] = df_with_swings['low'].iloc[i]
+                df.loc[df.index[i], 'has_displacement'] = True
                 
     return df
 

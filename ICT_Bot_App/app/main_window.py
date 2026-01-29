@@ -10,7 +10,7 @@ from PySide6.QtGui import QCloseEvent
 
 from app.worker import BotWorker, BacktestWorker
 from app.config_manager import config_manager
-from trading_core.time_filter import get_kill_zone_status
+from trading_core.time_filter import get_kill_zone_status, get_all_kill_zones_with_utc7
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -135,9 +135,61 @@ class MainWindow(QMainWindow):
         account_layout.addRow("P/L Phiên:", self.pnl_session_label)
         layout.addWidget(account_group)
 
+        # Kill Zone Schedule Table with UTC+7
+        kz_schedule_group = QGroupBox("Lịch Kill Zone (EST → UTC+7)")
+        kz_schedule_layout = QVBoxLayout(kz_schedule_group)
+        
+        self.kz_schedule_table = QTableWidget()
+        self.kz_schedule_table.setColumnCount(4)
+        self.kz_schedule_table.setHorizontalHeaderLabels(
+            ["Kill Zone", "EST (New York)", "UTC+7 (Việt Nam)", "Trạng thái"]
+        )
+        header = self.kz_schedule_table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.kz_schedule_table.setMaximumHeight(180)
+        kz_schedule_layout.addWidget(self.kz_schedule_table)
+        
+        # Populate the table
+        self._populate_kill_zone_table()
+        
+        layout.addWidget(kz_schedule_group)
+
         layout.addStretch()
 
         return widget
+
+    def _populate_kill_zone_table(self):
+        """Điền dữ liệu Kill Zone vào bảng với thời gian UTC+7."""
+        try:
+            kz_list = get_all_kill_zones_with_utc7()
+            self.kz_schedule_table.setRowCount(len(kz_list))
+            
+            for row, kz in enumerate(kz_list):
+                # Tên Kill Zone
+                name_item = QTableWidgetItem(kz['name'])
+                self.kz_schedule_table.setItem(row, 0, name_item)
+                
+                # Thời gian EST
+                est_time = f"{kz['est_start']} - {kz['est_end']}"
+                est_item = QTableWidgetItem(est_time)
+                self.kz_schedule_table.setItem(row, 1, est_item)
+                
+                # Thời gian UTC+7 (có ghi chú nếu sang ngày hôm sau)
+                utc7_start = kz['utc7_start']
+                utc7_end = kz['utc7_end']
+                if kz.get('utc7_start_next_day') or kz.get('utc7_end_next_day'):
+                    utc7_time = f"{utc7_start} - {utc7_end} (+1 ngày)"
+                else:
+                    utc7_time = f"{utc7_start} - {utc7_end}"
+                utc7_item = QTableWidgetItem(utc7_time)
+                self.kz_schedule_table.setItem(row, 2, utc7_item)
+                
+                # Trạng thái (Bật/Tắt)
+                status_text = "Bật" if kz['enabled'] else "Tắt"
+                status_item = QTableWidgetItem(status_text)
+                self.kz_schedule_table.setItem(row, 3, status_item)
+        except Exception as e:
+            print(f"Lỗi populate KZ table: {e}")
 
     def create_config_tab(self):
         widget = QWidget()
@@ -189,6 +241,16 @@ class MainWindow(QMainWindow):
         self.risk_spinbox.setSuffix("%")
         trading_layout.addRow("Cặp tiền:", self.symbol_input)
         trading_layout.addRow("Rủi ro mỗi lệnh:", self.risk_spinbox)
+        
+        # New Settings: OTE & Partial Profits
+        self.ote_checkbox = QCheckBox("Bật OTE Filter (Fibonacci 62-79%)")
+        self.ote_checkbox.setChecked(bool(config_manager.get('trading.ote_enabled', True)))
+        trading_layout.addRow(self.ote_checkbox)
+        
+        self.partial_profit_checkbox = QCheckBox("Bật chốt lời từng phần (Partial Profits)")
+        self.partial_profit_checkbox.setChecked(bool(config_manager.get('trading.partial_profits_enabled', False)))
+        trading_layout.addRow(self.partial_profit_checkbox)
+        
         layout.addWidget(trading_group)
 
         # Save Config Button
@@ -400,10 +462,20 @@ class MainWindow(QMainWindow):
 
             config_manager.set('trading.symbol', self.symbol_input.text())
             config_manager.set('trading.risk_percent_per_trade', risk_percent)
+            
+            # Save new settings
+            config_manager.set('trading.ote_enabled', self.ote_checkbox.isChecked())
+            config_manager.set('trading.partial_profits_enabled', self.partial_profit_checkbox.isChecked())
 
             config_manager.save_config()
             self.append_to_log("Cấu hình đã được lưu thành công.")
             self._update_platform_info_from_config() # Update platform/account info after saving
+            
+            # Reload config in trading core
+            import importlib
+            from trading_core import config_loader
+            importlib.reload(config_loader)
+            
         except ValueError as e:
             self.append_to_log(f"Lỗi: Dữ liệu không hợp lệ. Vui lòng kiểm tra lại các trường số. Chi tiết: {e}")
         except Exception as e:

@@ -1,6 +1,12 @@
-from .market_structure import get_current_bias, detect_bos_choch, find_swings, get_dealing_range, is_in_premium_or_discount
+from .market_structure import get_current_bias, detect_bos_choch, find_swings, get_dealing_range, is_in_premium_or_discount, calculate_ote_levels, is_price_in_ote_zone, get_recent_swing_range, detect_equal_highs_lows, detect_liquidity_sweep
 from .pd_arrays import detect_fvg, detect_order_block, detect_breaker_block
-from .config_loader import TIMEFRAME, TIMEFRAME_SMALLER, RISK_PERCENT_PER_TRADE, TAKE_PROFIT_RR, ENABLE_LOGGING, SL_BUFFER_POINTS
+from .silver_bullet import detect_silver_bullet_setup
+from .config_loader import (
+    TIMEFRAME, TIMEFRAME_SMALLER, RISK_PERCENT_PER_TRADE, TAKE_PROFIT_RR, 
+    ENABLE_LOGGING, SL_BUFFER_POINTS, OTE_ENABLED, OTE_LEVEL_PRIMARY,
+    PARTIAL_PROFITS_ENABLED, PARTIAL_TP1_PERCENT, PARTIAL_TP1_RR, 
+    PARTIAL_TP2_PERCENT, PARTIAL_TP2_RR, PARTIAL_TP3_RR
+)
 import math
 import pandas as pd
 
@@ -60,6 +66,123 @@ def calculate_position_size(connector: 'BaseConnector', sl_price: float, entry_p
 
     return volume
 
+
+def calculate_partial_orders(
+    total_quantity: float, 
+    entry_price: float, 
+    sl_price: float, 
+    signal: str,
+    connector: 'BaseConnector'
+) -> list[dict]:
+    """
+    Tính toán các lệnh partial profit theo ICT method.
+    
+    ICT Partial Profit Strategy:
+    - TP1: 50% @ 1:1 R:R
+    - TP2: 25% @ 2:1 R:R
+    - TP3: 25% @ 3:1 R:R (hoặc trailing)
+    
+    Returns:
+        List of order dicts: [{'quantity': float, 'tp': float, 'label': str}, ...]
+    """
+    if not PARTIAL_PROFITS_ENABLED:
+        # Nếu tắt partial, trả về 1 lệnh duy nhất với TP mặc định
+        sl_distance = abs(entry_price - sl_price)
+        if signal == 'long':
+            tp = entry_price + (sl_distance * TAKE_PROFIT_RR)
+        else:
+            tp = entry_price - (sl_distance * TAKE_PROFIT_RR)
+        return [{'quantity': total_quantity, 'tp': tp, 'label': 'FULL'}]
+    
+    symbol_info = connector.get_symbol_info()
+    volume_step = getattr(symbol_info, 'volume_step', 0.01)
+    volume_min = getattr(symbol_info, 'volume_min', 0.01)
+    
+    sl_distance = abs(entry_price - sl_price)
+    
+    # Tính TP levels
+    if signal == 'long':
+        tp1 = entry_price + (sl_distance * PARTIAL_TP1_RR)
+        tp2 = entry_price + (sl_distance * PARTIAL_TP2_RR)
+        tp3 = entry_price + (sl_distance * PARTIAL_TP3_RR)
+    else:
+        tp1 = entry_price - (sl_distance * PARTIAL_TP1_RR)
+        tp2 = entry_price - (sl_distance * PARTIAL_TP2_RR)
+        tp3 = entry_price - (sl_distance * PARTIAL_TP3_RR)
+    
+    # Tính khối lượng cho từng phần
+    qty1_raw = total_quantity * (PARTIAL_TP1_PERCENT / 100)
+    qty2_raw = total_quantity * (PARTIAL_TP2_PERCENT / 100)
+    qty3_raw = total_quantity - qty1_raw - qty2_raw  # Phần còn lại
+    
+    # Làm tròn theo volume_step
+    qty1 = math.floor(qty1_raw / volume_step) * volume_step
+    qty2 = math.floor(qty2_raw / volume_step) * volume_step
+    qty3 = math.floor(qty3_raw / volume_step) * volume_step
+    
+    orders = []
+    
+    # Chỉ thêm lệnh nếu quantity >= volume_min
+    if qty1 >= volume_min:
+        orders.append({'quantity': qty1, 'tp': tp1, 'label': 'TP1 (50%@1:1)'})
+    
+    if qty2 >= volume_min:
+        orders.append({'quantity': qty2, 'tp': tp2, 'label': 'TP2 (25%@2:1)'})
+    
+    if qty3 >= volume_min:
+        orders.append({'quantity': qty3, 'tp': tp3, 'label': 'TP3 (25%@3:1)'})
+    
+    # Nếu không có lệnh nào đủ điều kiện, fallback về 1 lệnh
+    if not orders:
+        if signal == 'long':
+            tp = entry_price + (sl_distance * TAKE_PROFIT_RR)
+        else:
+            tp = entry_price - (sl_distance * TAKE_PROFIT_RR)
+        orders = [{'quantity': total_quantity, 'tp': tp, 'label': 'FULL (min qty)'}]
+    
+    return orders
+
+
+def check_ote_confluence(df: pd.DataFrame, current_price: float, bias: str, signals=None) -> tuple[bool, dict | None]:
+    """
+    Kiểm tra xem giá hiện tại có nằm trong vùng OTE không.
+    
+    Args:
+        df: DataFrame với swing data
+        current_price: Giá hiện tại
+        bias: 'long' hoặc 'short'
+        signals: Signal object để log
+    
+    Returns:
+        (bool, dict): (có trong OTE zone không, OTE levels dict)
+    
+    ICT OTE Logic:
+    - Cho LONG: Giá cần retrace về vùng OTE (62%-79%) của swing range
+    - Cho SHORT: Tương tự nhưng ngược lại
+    """
+    if not OTE_ENABLED:
+        return True, None  # Bỏ qua OTE check nếu tắt
+    
+    direction = 'bullish' if bias == 'long' else 'bearish'
+    swing_low, swing_high = get_recent_swing_range(df, direction)
+    
+    if swing_low is None or swing_high is None:
+        if ENABLE_LOGGING and signals:
+            signals.log_message.emit("[OTE] Không tìm thấy swing range cho OTE")
+        return True, None  # Không block nếu không tìm thấy swing
+    
+    ote_levels = calculate_ote_levels(swing_high, swing_low, direction)
+    in_ote, position = is_price_in_ote_zone(current_price, ote_levels, direction)
+    
+    if ENABLE_LOGGING and signals:
+        signals.log_message.emit(
+            f"[OTE] Range: {swing_low:.2f}-{swing_high:.2f} | "
+            f"OTE Zone: {ote_levels['ote_62']:.2f}-{ote_levels['ote_79']:.2f} | "
+            f"Price: {current_price:.2f} | Position: {position}"
+        )
+    
+    return in_ote, ote_levels
+
 def evaluate_signal(df_main: pd.DataFrame, df_small: pd.DataFrame, connector: 'BaseConnector', signals=None) -> tuple[str, float | None, float | None]:
     bias = get_current_bias(df_main, signals)
     if ENABLE_LOGGING and signals: signals.log_message.emit(f"[EVAL] Bias: {bias}")
@@ -92,6 +215,13 @@ def evaluate_signal(df_main: pd.DataFrame, df_small: pd.DataFrame, connector: 'B
              return 'none', None, None
         
         if ENABLE_LOGGING and signals: signals.log_message.emit("[EVAL] Price in DISCOUNT. Looking for Bullish PD Arrays...")
+        
+        # OTE Confluence Check cho LONG
+        in_ote, ote_levels = check_ote_confluence(df_main, latest_close, bias, signals)
+        if OTE_ENABLED and not in_ote:
+            if ENABLE_LOGGING and signals: 
+                signals.log_message.emit("[EVAL] Price NOT in OTE zone. Skipping LONG entry.")
+            return 'none', None, None
         
         # 1. Tìm Bullish Order Block
         bullish_ob_list = df_main[(df_main['ob_bullish']) & (df_main['ob_zone_low'] < equilibrium)]
@@ -145,6 +275,13 @@ def evaluate_signal(df_main: pd.DataFrame, df_small: pd.DataFrame, connector: 'B
 
         if ENABLE_LOGGING and signals: signals.log_message.emit("[EVAL] Price in PREMIUM. Looking for Bearish PD Arrays...")
 
+        # OTE Confluence Check cho SHORT
+        in_ote, ote_levels = check_ote_confluence(df_main, latest_close, bias, signals)
+        if OTE_ENABLED and not in_ote:
+            if ENABLE_LOGGING and signals: 
+                signals.log_message.emit("[EVAL] Price NOT in OTE zone. Skipping SHORT entry.")
+            return 'none', None, None
+
         # 1. Tìm Bearish Order Block
         bearish_ob_list = df_main[(df_main['ob_bearish']) & (df_main['ob_zone_high'] > equilibrium)]
         if not bearish_ob_list.empty:
@@ -190,6 +327,27 @@ def evaluate_signal(df_main: pd.DataFrame, df_small: pd.DataFrame, connector: 'B
                         return 'short', entry, sl_price
                      elif ENABLE_LOGGING and signals: signals.log_message.emit(f"[EVAL] INVALID (BB): Entry Price >= SL.")
 
+    # --- SILVER BULLET STRATEGY CHECK ---
+    # Nếu chưa có signal nào từ core strategy, check Silver Bullet
+    # Lưu ý: Silver Bullet có thể hoạt động độc lập với Premium/Discount bias đôi khi, 
+    # nhưng ở đây ta vẫn tuân thủ Bias chung để an toàn.
+    
+    # Sử dụng df_small (LTF) để check Silver Bullet vì nó cần độ chính xác cao về thời gian (M5/M15)
+    sb_found, sb_entry, sb_sl = detect_silver_bullet_setup(df_small, latest_close, bias, signals)
+    
+    if sb_found and sb_entry is not None and sb_sl is not None:
+        # Áp dụng buffer cho SL
+        if bias == 'long':
+            sb_sl -= sl_buffer_value
+            if sb_entry > sb_sl:
+                if ENABLE_LOGGING and signals: signals.log_message.emit(f"[EVAL] Signal found: Silver Bullet LONG")
+                return 'long', sb_entry, sb_sl
+        else:
+            sb_sl += sl_buffer_value
+            if sb_entry < sb_sl:
+                if ENABLE_LOGGING and signals: signals.log_message.emit(f"[EVAL] Signal found: Silver Bullet SHORT")
+                return 'short', sb_entry, sb_sl
+
     return 'none', None, None
 
 def check_ltf_confirmation(df_small: pd.DataFrame, trend: str, signals=None) -> tuple[bool, float | None, float | None]:
@@ -212,6 +370,19 @@ def check_ltf_confirmation(df_small: pd.DataFrame, trend: str, signals=None) -> 
                 confirmation_found = True
                 confirm_idx = loc
                 if ENABLE_LOGGING and signals: signals.log_message.emit(f"[EVAL] Confirmed by: LTF {trend.upper()} CHOCH")
+                
+                # Check ICT 2022 Model (Liquidity Sweep before CHOCH)
+                # Check 10 nến trước CHOCH
+                sweep_found = False
+                for k in range(max(0, confirm_idx - 10), confirm_idx):
+                    sweep_type = detect_liquidity_sweep(df_small, k, lookback=20)
+                    expected_sweep = 'bullish' if trend == 'bullish' else 'bearish' # Bullish Setup cần Bullish Sweep (quét đáy)
+                    if sweep_type == expected_sweep:
+                        sweep_found = True
+                        break
+                
+                if sweep_found and ENABLE_LOGGING and signals:
+                    signals.log_message.emit(f"[ICT 2022] Liquidity Sweep detected before CHOCH! High Probability Setup.")
         
         # Kiểm tra BOS trong 20 nến gần nhất nếu chưa tìm thấy CHOCH
         if not confirmation_found and not recent_bos.empty:
@@ -271,6 +442,18 @@ def execute_strategy(connector: 'BaseConnector', signals=None) -> None:
 
     df_with_fvg = detect_fvg(df_main.copy())
     df_with_swings = find_swings(df_with_fvg)
+    
+    # Detect Liquidity (EQH/EQL)
+    df_with_swings = detect_equal_highs_lows(df_with_swings)
+    
+    # Log Liquidity Pools
+    if ENABLE_LOGGING and signals:
+        latest_idx = df_with_swings.index[-1]
+        if df_with_swings.loc[latest_idx, 'eqh']:
+            signals.log_message.emit("[LIQUIDITY] Equal Highs detected! Watch for sweep.")
+        if df_with_swings.loc[latest_idx, 'eql']:
+            signals.log_message.emit("[LIQUIDITY] Equal Lows detected! Watch for sweep.")
+
     df_with_bos = detect_bos_choch(df_with_swings)
     df_with_ob = detect_order_block(df_with_bos)
     df_main_analyzed = detect_breaker_block(df_with_ob)
@@ -280,16 +463,29 @@ def execute_strategy(connector: 'BaseConnector', signals=None) -> None:
     signal, entry_price, sl_price = evaluate_signal(df_main_analyzed, df_small_analyzed, connector, signals)
 
     if signal != 'none' and entry_price is not None and sl_price is not None:
-        rr = float(TAKE_PROFIT_RR)
-        sl_distance = abs(entry_price - sl_price)
-        tp_price = entry_price + (sl_distance * rr) if signal == 'long' else entry_price - (sl_distance * rr)
-
         quantity = calculate_position_size(connector, sl_price, entry_price, signals)
         
         if quantity is not None and quantity > 0:
-            msg = f"Tín hiệu {signal.upper()}: Giá={entry_price:.5f}, SL={sl_price:.5f}, TP={tp_price:.5f}, Khối lượng={quantity}"
-            if ENABLE_LOGGING and signals: signals.log_message.emit(msg)
-            connector.place_order(signal, quantity, sl_price, tp_price) 
+            # Tính toán các lệnh partial profit
+            partial_orders = calculate_partial_orders(quantity, entry_price, sl_price, signal, connector)
+            
+            if PARTIAL_PROFITS_ENABLED:
+                if ENABLE_LOGGING and signals: 
+                    signals.log_message.emit(f"[PARTIAL] Chia {len(partial_orders)} lệnh partial profit:")
+                
+                for i, order in enumerate(partial_orders):
+                    msg = f"  [{order['label']}] Qty={order['quantity']:.4f}, TP={order['tp']:.5f}"
+                    if ENABLE_LOGGING and signals: signals.log_message.emit(msg)
+                    connector.place_order(signal, order['quantity'], sl_price, order['tp'])
+            else:
+                # Lệnh đơn như cũ
+                rr = float(TAKE_PROFIT_RR)
+                sl_distance = abs(entry_price - sl_price)
+                tp_price = entry_price + (sl_distance * rr) if signal == 'long' else entry_price - (sl_distance * rr)
+                
+                msg = f"Tín hiệu {signal.upper()}: Giá={entry_price:.5f}, SL={sl_price:.5f}, TP={tp_price:.5f}, Khối lượng={quantity}"
+                if ENABLE_LOGGING and signals: signals.log_message.emit(msg)
+                connector.place_order(signal, quantity, sl_price, tp_price)
     else:
         if ENABLE_LOGGING and signals: signals.log_message.emit("Không có tín hiệu giao dịch rõ ràng.")
 
