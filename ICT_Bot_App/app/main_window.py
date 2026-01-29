@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
     QPushButton, QLabel, QTextEdit, QTableWidget, QTableWidgetItem, QHeaderView,
     QFormLayout, QLineEdit, QDoubleSpinBox, QComboBox, QGroupBox, QMessageBox,
-    QDateEdit, QProgressBar
+    QDateEdit, QProgressBar, QCheckBox
 )
 from PySide6.QtCore import QTimer, QThread, QDate # Import QThread
 from PySide6.QtGui import QCloseEvent
@@ -204,13 +204,38 @@ class MainWindow(QMainWindow):
 
         self.log_text_edit = QTextEdit()
         self.log_text_edit.setReadOnly(True)
+        
+        # Bottom bar with checkbox and clear button
+        bottom_layout = QHBoxLayout()
+        
+        self.log_verbose_checkbox = QCheckBox("Bật ghi log chi tiết (Verbose)")
+        is_logging_enabled = config_manager.get('logging.enable_logging', True)
+        self.log_verbose_checkbox.setChecked(bool(is_logging_enabled))
+        self.log_verbose_checkbox.stateChanged.connect(self.toggle_verbose_logging)
+        
         clear_log_btn = QPushButton("Xóa nhật ký")
         clear_log_btn.clicked.connect(self.clear_log)
 
+        bottom_layout.addWidget(self.log_verbose_checkbox)
+        bottom_layout.addStretch()
+        bottom_layout.addWidget(clear_log_btn)
+
         layout.addWidget(self.log_text_edit)
-        layout.addWidget(clear_log_btn)
+        layout.addLayout(bottom_layout)
 
         return widget
+
+    def toggle_verbose_logging(self, state):
+        is_checked = state == 2 # 2 for checked, 0 for unchecked
+        config_manager.set('logging.enable_logging', is_checked)
+        config_manager.save_config() # Lưu thay đổi vào file config.json
+        
+        # Cập nhật lại các hằng số trong trading_core
+        import importlib
+        from trading_core import config_loader
+        importlib.reload(config_loader)
+
+        self.append_to_log(f"Ghi log chi tiết đã được {'BẬT' if is_checked else 'TẮT'}.")
 
     def create_trades_tab(self):
         widget = QWidget()

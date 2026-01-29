@@ -5,6 +5,7 @@ from trading_core.strategy import evaluate_signal, calculate_position_size
 from trading_core.market_structure import detect_bos_choch, find_swings
 from trading_core.pd_arrays import detect_fvg, detect_order_block, detect_breaker_block
 from trading_core.config_loader import TIMEFRAME, TIMEFRAME_SMALLER, TAKE_PROFIT_RR
+from trading_core.time_filter import is_kill_zone_time # Thêm import
 
 class Backtester:
     def __init__(self, params: dict, signals=None):
@@ -124,6 +125,10 @@ class Backtester:
             if open_positions:
                 continue
 
+            # Bỏ qua nếu không trong Kill Zone
+            if not is_kill_zone_time(timestamp=current_idx, signals=self.signals):
+                continue
+            
             try:
                 df_with_fvg = detect_fvg(df_main_slice.copy())
                 df_with_swings = find_swings(df_with_fvg)
@@ -134,7 +139,7 @@ class Backtester:
                 df_small_swings = find_swings(df_small_slice.copy())
                 df_small_analyzed = detect_bos_choch(df_small_swings)
 
-                signal, entry_price, sl_price = evaluate_signal(df_main_analyzed, df_small_analyzed, signals=self.signals)
+                signal, entry_price, sl_price = evaluate_signal(df_main_analyzed, df_small_analyzed, self.connector, signals=self.signals)
 
                 if signal != 'none' and entry_price is not None and sl_price is not None:
                      rr = float(TAKE_PROFIT_RR)

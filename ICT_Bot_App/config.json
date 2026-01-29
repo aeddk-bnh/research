@@ -79,6 +79,7 @@
         }
     },
     "logging": {
-        "log_file": "bot.log"
+        "log_file": "bot.log",
+        "enable_logging": true
     }
 }

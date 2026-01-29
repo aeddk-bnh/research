@@ -31,6 +31,10 @@ TAKE_PROFIT_PERCENT = _safe_float(config_manager.get('risk_management.binance.ta
 
 # --- Cấu hình khác ---
 LOG_FILE = str(config_manager.get('logging.log_file', 'bot.log'))
+ENABLE_LOGGING = False # Tắt log để tăng tốc độ backtest
+
+# --- Cấu hình Chiến lược Nâng cao ---
+SL_BUFFER_POINTS = _safe_float(config_manager.get('trading.sl_buffer_points', 50.0), 50.0) # Đơn vị: points
 
 # --- Cấu hình Nền tảng ---
 PLATFORM = str(config_manager.get('platform', 'mt5'))

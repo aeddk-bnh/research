@@ -30,8 +30,8 @@ if __name__ == "__main__":
     params = {
         'symbol': 'BTCUSDm',
         'timeframe': 'M5',
-        'start_date': '2026-01-20', 
-        'end_date': '2026-01-22'
+        'start_date': '2026-01-19', 
+        'end_date': '2026-01-23'
     }
     
     print("--- STARTING CLI BACKTEST WITH PREMIUM/DISCOUNT LOGIC ---")

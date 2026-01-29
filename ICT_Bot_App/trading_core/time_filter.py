@@ -2,13 +2,20 @@ from datetime import datetime
 import pytz
 from .config_loader import KILL_ZONES
 
-def get_kill_zone_status():
+def get_kill_zone_status(timestamp=None):
     """
     Kiểm tra trạng thái Kill Zone và trả về chuỗi mô tả.
     Trả về: (bool, str) -> (có trong KZ không, chuỗi trạng thái)
     """
     try:
-        utc_now = datetime.now(pytz.utc)
+        if timestamp:
+            if timestamp.tzinfo is None:
+                utc_now = pytz.utc.localize(timestamp)
+            else:
+                utc_now = timestamp.astimezone(pytz.utc)
+        else:
+            utc_now = datetime.now(pytz.utc)
+            
         ny_tz = pytz.timezone('America/New_York')
         ny_now = utc_now.astimezone(ny_tz)
         current_time_tuple = (ny_now.hour, ny_now.minute)
@@ -36,16 +43,16 @@ def get_kill_zone_status():
 
     return False, "Ngoài giờ Kill Zone"
 
-def is_kill_zone_time(signals=None):
+def is_kill_zone_time(timestamp=None, signals=None):
     """
     Chỉ kiểm tra xem có đang trong Kill Zone không.
     Hàm này được dùng cho logic chính của bot.
     """
-    is_in_kz, status_str = get_kill_zone_status()
+    is_in_kz, status_str = get_kill_zone_status(timestamp=timestamp)
     # Ghi log trạng thái hiện tại nếu cần
-    if signals:
-        # Chỉ ghi log nếu cần thiết, không nhất thiết phải mỗi lần gọi
-        pass # Logic log sẽ được xử lý ở nơi khác
+    if signals and timestamp is None: # Chỉ log cho live trading để tránh spam
+        # Logic log sẽ được xử lý ở nơi khác
+        pass 
         
     return is_in_kz
 
