@@ -70,43 +70,136 @@ def get_current_bias(df, signals=None):
         return 'neutral'
 
 
+
+def detect_liquidity_sweep(df, index, lookback=15):
+    """
+    Kiểm tra xem một cây nến có quét thanh khoản của một đỉnh/đáy trước đó hay không.
+    - Bullish Sweep: Low của nến hiện tại thấp hơn low của một swing low gần đó.
+    - Bearish Sweep: High của nến hiện tại cao hơn high của một swing high gần đó.
+    
+    Args:
+        df (pd.DataFrame): DataFrame chứa dữ liệu OHLC và swings.
+        index (int): Index của cây nến cần kiểm tra.
+        lookback (int): Số lượng nến để nhìn lại tìm swing.
+
+    Returns:
+        str: 'bullish' nếu có sweep bullish, 'bearish' nếu có sweep bearish, 'none' nếu không có.
+    """
+    if index < lookback:
+        return 'none'
+
+    candle = df.loc[index]
+    lookback_df = df.iloc[max(0, index - lookback):index]
+
+    # Bullish Sweep Check (quét đáy)
+    # Nến hiện tại (có thể là Bullish OB) phải là một nến giảm
+    if candle['close'] < candle['open']:
+        # Tìm các swing low trong vùng lookback
+        recent_swing_lows = lookback_df[lookback_df['swing_low'].notna()]
+        if not recent_swing_lows.empty:
+            # Kiểm tra xem low của nến hiện tại có phá vỡ (quét) bất kỳ swing low nào gần đây không
+            for _, swing_low in recent_swing_lows.iterrows():
+                if candle['low'] < swing_low['swing_low']:
+                    return 'bullish'
+    
+    # Bearish Sweep Check (quét đỉnh)
+    # Nến hiện tại (có thể là Bearish OB) phải là một nến tăng
+    if candle['close'] > candle['open']:
+        # Tìm các swing high trong vùng lookback
+        recent_swing_highs = lookback_df[lookback_df['swing_high'].notna()]
+        if not recent_swing_highs.empty:
+            # Kiểm tra xem high của nến hiện tại có phá vỡ (quét) bất kỳ swing high nào gần đây không
+            for _, swing_high in recent_swing_highs.iterrows():
+                if candle['high'] > swing_high['swing_high']:
+                    return 'bearish'
+
+    return 'none'
+    
 def detect_bos_choch(df):
     """
-    Phát hiện Break of Structure (BOS) và Change of Character (CHOCH).
-    Đây là một logic đơn giản hóa.
+    Phát hiện Break of Structure (BOS) và Change of Character (CHOCH)
+    với logic được cải tiến, bám sát định nghĩa của ICT.
     """
-    df = find_swings(df)
     df['bos'] = None
     df['choch'] = None
 
-    swing_highs = df[df['swing_high'].notna()]
-    swing_lows = df[df['swing_low'].notna()]
+    swing_highs = df[df['swing_high'].notna()].copy()
+    swing_lows = df[df['swing_low'].notna()].copy()
 
-    # Phát hiện BOS/CHOCH Bullish
-    for i in range(1, len(swing_highs)):
-        prev_high = swing_highs['swing_high'].iloc[i-1]
-        current_high = swing_highs['swing_high'].iloc[i]
-        
-        # Tìm đáy thấp nhất giữa 2 đỉnh
-        lows_between = df.loc[swing_highs.index[i-1]:swing_highs.index[i]]['low']
-        
-        if current_high > prev_high: # Tạo đỉnh cao hơn -> có thể là BOS
-            df.loc[swing_highs.index[i], 'bos'] = 'bullish'
-        elif not lows_between.empty and df['close'].iloc[-1] < lows_between.min(): # Phá vỡ đáy giữa -> CHOCH
-             df.loc[df.index[-1], 'choch'] = 'bearish'
+    if swing_highs.empty or swing_lows.empty:
+        return df
 
+    # Gộp và sắp xếp các swing points
+    swing_points = pd.concat([
+        swing_highs.assign(type='high'),
+        swing_lows.assign(type='low')
+    ]).sort_index()
 
-    # Phát hiện BOS/CHOCH Bearish
-    for i in range(1, len(swing_lows)):
-        prev_low = swing_lows['swing_low'].iloc[i-1]
-        current_low = swing_lows['swing_low'].iloc[i]
-        
-        # Tìm đỉnh cao nhất giữa 2 đáy
-        highs_between = df.loc[swing_lows.index[i-1]:swing_lows.index[i]]['high']
+    last_swing_high = None
+    last_swing_low = None
+    trend = None # 'up', 'down'
 
-        if current_low < prev_low: # Tạo đáy thấp hơn -> có thể là BOS
-            df.loc[swing_lows.index[i], 'bos'] = 'bearish'
-        elif not highs_between.empty and df['close'].iloc[-1] > highs_between.max(): # Phá vỡ đỉnh giữa -> CHOCH
-             df.loc[df.index[-1], 'choch'] = 'bullish'
-             
+    for i in range(len(swing_points)):
+        current_point = swing_points.iloc[i]
+        current_time = swing_points.index[i]
+
+        if current_point['type'] == 'high':
+            last_swing_high = current_point['swing_high']
+            
+            # Nếu đang trong xu hướng tăng và tạo đỉnh cao hơn -> BOS
+            if trend == 'up' and last_swing_high > swing_points[swing_points['type'] == 'high'].iloc[-2]['swing_high']:
+                 # Tìm nến thực sự phá vỡ đỉnh cũ
+                prev_high_val = swing_points[swing_points['type'] == 'high'].iloc[-2]['swing_high']
+                breakout_candle_idx = df[(df.index > swing_points.index[i-1]) & (df.index <= current_time) & (df['high'] > prev_high_val)].first_valid_index()
+                if breakout_candle_idx:
+                    df.loc[breakout_candle_idx, 'bos'] = 'bullish'
+            
+            # Nếu đang trong xu hướng giảm và phá vỡ đỉnh -> CHOCH
+            elif trend == 'down':
+                # Tìm swing high gần nhất trước đó
+                prev_highs = swing_points[(swing_points.index < current_time) & (swing_points['type'] == 'high')]
+                if not prev_highs.empty:
+                    prev_high_val = prev_highs.iloc[-1]['swing_high']
+                    if last_swing_high > prev_high_val:
+                         # Tìm nến thực sự phá vỡ
+                        breakout_candle_idx = df[(df.index > prev_highs.index[-1]) & (df.index <= current_time) & (df['high'] > prev_high_val)].first_valid_index()
+                        if breakout_candle_idx:
+                            df.loc[breakout_candle_idx, 'choch'] = 'bullish'
+                            trend = 'up' # Thay đổi xu hướng
+
+        elif current_point['type'] == 'low':
+            last_swing_low = current_point['swing_low']
+            
+            # Nếu đang trong xu hướng giảm và tạo đáy thấp hơn -> BOS
+            if trend == 'down' and last_swing_low < swing_points[swing_points['type'] == 'low'].iloc[-2]['swing_low']:
+                prev_low_val = swing_points[swing_points['type'] == 'low'].iloc[-2]['swing_low']
+                breakout_candle_idx = df[(df.index > swing_points.index[i-1]) & (df.index <= current_time) & (df['low'] < prev_low_val)].first_valid_index()
+                if breakout_candle_idx:
+                    df.loc[breakout_candle_idx, 'bos'] = 'bearish'
+            
+            # Nếu đang trong xu hướng tăng và phá vỡ đáy -> CHOCH
+            elif trend == 'up':
+                prev_lows = swing_points[(swing_points.index < current_time) & (swing_points['type'] == 'low')]
+                if not prev_lows.empty:
+                    prev_low_val = prev_lows.iloc[-1]['swing_low']
+                    if last_swing_low < prev_low_val:
+                        breakout_candle_idx = df[(df.index > prev_lows.index[-1]) & (df.index <= current_time) & (df['low'] < prev_low_val)].first_valid_index()
+                        if breakout_candle_idx:
+                            df.loc[breakout_candle_idx, 'choch'] = 'bearish'
+                            trend = 'down' # Thay đổi xu hướng
+                            
+        # Khởi tạo trend ban đầu
+        if trend is None and i > 0:
+            prev_point = swing_points.iloc[i-1]
+            if current_point['type'] == 'high' and prev_point['type'] == 'low':
+                if current_point['swing_high'] > prev_point['swing_high']:
+                    trend = 'up'
+                else:
+                    trend = 'down'
+            elif current_point['type'] == 'low' and prev_point['type'] == 'high':
+                if current_point['swing_low'] < prev_point['swing_low']:
+                    trend = 'down'
+                else:
+                    trend = 'up'
+
     return df

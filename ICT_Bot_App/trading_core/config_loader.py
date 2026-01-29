@@ -21,6 +21,7 @@ def _safe_int(value, default):
 TIMEFRAME = str(config_manager.get('trading.timeframe', '1h'))
 TIMEFRAME_SMALLER = str(config_manager.get('trading.timeframe_smaller', '15m'))
 RISK_PERCENT_PER_TRADE = _safe_float(config_manager.get('trading.risk_percent_per_trade', 1.0), 1.0)
+TAKE_PROFIT_RR = _safe_float(config_manager.get('trading.take_profit_rr', 2.0), 2.0)
 
 # --- Cấu hình Rủi ro ---
 STOP_LOSS_POINTS = _safe_int(config_manager.get('risk_management.mt5.stop_loss_points', 2000), 2000)

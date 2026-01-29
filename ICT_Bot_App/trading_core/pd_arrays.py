@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from .market_structure import find_swings
+from .market_structure import find_swings, detect_liquidity_sweep
 
 
 def detect_fvg(df):
@@ -27,48 +27,63 @@ def detect_fvg(df):
 
 def detect_order_block(df):
     """
-    Phát hiện Order Block (OB).
-    Bullish OB: nến giảm cuối cùng trước một đợt tăng mạnh gây ra BOS.
-    Bearish OB: nến tăng cuối cùng trước một đợt giảm mạnh gây ra BOS.
+    Phát hiện Order Block (OB) với các điều kiện ICT nâng cao.
+    - Phải quét thanh khoản (liquidity sweep).
+    - Phải gây ra phá vỡ cấu trúc (BOS).
+    - Thường tạo ra FVG (điều kiện tùy chọn, có thể thêm sau).
     """
     df['ob_bullish'] = False
     df['ob_bearish'] = False
     df['ob_zone_high'] = np.nan
     df['ob_zone_low'] = np.nan
+    df['liquidity_sweep'] = 'none' # Thêm cột để debug
 
-    for i in range(1, len(df)-3): # -3 để đảm bảo có nến sau để kiểm tra BOS
-        # Bullish OB
-        if df['close'].iloc[i-1] < df['open'].iloc[i-1] and df['close'].iloc[i] > df['open'].iloc[i]:
-            # Nếu nến hiện tại tăng mạnh và nến trước đó giảm
-            if (df['close'].iloc[i] - df['open'].iloc[i]) > (df['open'].iloc[i-1] - df['close'].iloc[i-1]):
-                # Kiểm tra xem có BOS Bullish trong 3 nến tiếp theo không
-                bos_found = False
-                for j in range(i+1, min(i+4, len(df))): # Kiểm tra 3 nến sau OB
-                    if df['bos'].iloc[j] == 'bullish':
-                        bos_found = True
-                        break
-                
-                if bos_found:
-                    df.loc[df.index[i-1], 'ob_bullish'] = True
-                    df.loc[df.index[i-1], 'ob_zone_high'] = df['high'].iloc[i-1]
-                    df.loc[df.index[i-1], 'ob_zone_low'] = df['low'].iloc[i-1]
+    # Cần chạy find_swings trước để detect_liquidity_sweep hoạt động
+    df_with_swings = find_swings(df.copy())
+
+    # Lặp qua các nến, bắt đầu từ chỉ số có đủ dữ liệu lookback
+    for i in range(15, len(df_with_swings)-3):
         
+        # 1. KIỂM TRA LIQUIDITY SWEEP
+        sweep_type = detect_liquidity_sweep(df_with_swings, i)
+        
+        if sweep_type == 'none':
+            continue # Bỏ qua nếu không có sweep
+
+        df.loc[df.index[i], 'liquidity_sweep'] = sweep_type
+
+        # 2. XÁC ĐỊNH OB VÀ KIỂM TRA BOS
+        
+        # Bullish OB
+        # Sweep phải là 'bullish' (quét đáy) và nến OB phải là nến giảm
+        if sweep_type == 'bullish' and df_with_swings['close'].iloc[i] < df_with_swings['open'].iloc[i]:
+            # Kiểm tra xem có BOS Bullish trong 3 nến tiếp theo không
+            bos_found = False
+            for j in range(i + 1, min(i + 4, len(df_with_swings))):
+                if df_with_swings['bos'].iloc[j] == 'bullish':
+                    bos_found = True
+                    break
+            
+            if bos_found:
+                df.loc[df.index[i], 'ob_bullish'] = True
+                df.loc[df.index[i], 'ob_zone_high'] = df_with_swings['high'].iloc[i]
+                df.loc[df.index[i], 'ob_zone_low'] = df_with_swings['low'].iloc[i]
+
         # Bearish OB
-        if df['close'].iloc[i-1] > df['open'].iloc[i-1] and df['close'].iloc[i] < df['open'].iloc[i]:
-             # Nếu nến hiện tại giảm mạnh và nến trước đó tăng
-            if (df['open'].iloc[i] - df['close'].iloc[i]) > (df['close'].iloc[i-1] - df['open'].iloc[i-1]):
-                # Kiểm tra xem có BOS Bearish trong 3 nến tiếp theo không
-                bos_found = False
-                for j in range(i+1, min(i+4, len(df))): # Kiểm tra 3 nến sau OB
-                    if df['bos'].iloc[j] == 'bearish':
-                        bos_found = True
-                        break
+        # Sweep phải là 'bearish' (quét đỉnh) và nến OB phải là nến tăng
+        elif sweep_type == 'bearish' and df_with_swings['close'].iloc[i] > df_with_swings['open'].iloc[i]:
+            # Kiểm tra xem có BOS Bearish trong 3 nến tiếp theo không
+            bos_found = False
+            for j in range(i + 1, min(i + 4, len(df_with_swings))):
+                if df_with_swings['bos'].iloc[j] == 'bearish':
+                    bos_found = True
+                    break
+            
+            if bos_found:
+                df.loc[df.index[i], 'ob_bearish'] = True
+                df.loc[df.index[i], 'ob_zone_high'] = df_with_swings['high'].iloc[i]
+                df.loc[df.index[i], 'ob_zone_low'] = df_with_swings['low'].iloc[i]
                 
-                if bos_found:
-                    df.loc[df.index[i-1], 'ob_bearish'] = True
-                    df.loc[df.index[i-1], 'ob_zone_high'] = df['high'].iloc[i-1]
-                    df.loc[df.index[i-1], 'ob_zone_low'] = df['low'].iloc[i-1]
-   
     return df
 
 

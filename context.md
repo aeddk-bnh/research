@@ -92,13 +92,33 @@ Tài liệu này tóm tắt toàn bộ quá trình làm việc, từ giai đoạ
     4.  **Sử dụng Signals/Slots:** Thiết lập hệ thống giao tiếp giữa `BotWorker` và `MainWindow` thông qua các tín hiệu (`Signal`) và slot để cập nhật UI một cách an toàn từ luồng khác.
     5.  **Xây dựng UI:** Tạo giao diện chính với các tab: Dashboard, Cấu hình, Nhật ký, Giao dịch.
     6.  **Tích hợp chức năng:** Kết nối các nút bấm (Bắt đầu/Dừng Bot, Lưu Cấu hình), cập nhật trạng thái, hiển thị log, và bảng lệnh.
-    7.  **Gỡ lỗi và hoàn thiện:**
-        -   Cải thiện chức năng "Lưu Cấu hình" để xử lý lỗi người dùng nhập sai.
-        -   Cải thiện logic "Bắt đầu/Dừng Bot" để đảm bảo thread được quản lý đúng cách.
-        -   Thêm chức năng "Lịch sử giao dịch".
-        -   Cập nhật P&L theo thời gian thực.
-        -   Ghi log ra file.
-        -   Thêm hộp thoại xác nhận khi đóng ứng dụng.
-        -   **(Hiện tại)** Sửa lỗi cập nhật trạng thái Kill Zone lên UI. Ban đầu, trạng thái không cập nhật do `QTimer` được khởi tạo trong luồng sai. Đã sửa bằng cách tạo và quản lý `QTimer` hoàn toàn bên trong `BotWorker` (luồng worker).
 - **Kết quả:** Ứng dụng desktop có UI đã được tạo, cho phép người dùng dễ dàng quản lý và giám sát bot giao dịch ICT.
 
+---
+
+## Giai đoạn 7: Tinh chỉnh Toàn diện Logic Giao dịch ICT
+
+- **Mục tiêu:** Nâng cấp toàn diện logic giao dịch cốt lõi để tuân thủ chặt chẽ hơn với các quy tắc của phương pháp ICT, nhằm tăng chất lượng tín hiệu.
+- **Thực thi (một chuỗi các cải tiến liên tiếp):**
+    1.  **Đánh giá lại Toàn bộ Dự án:** Phân tích lại cấu trúc ứng dụng desktop mới để hiểu rõ luồng hoạt động.
+    2.  **Nâng cấp #1: Phát hiện Order Block (OB):**
+        -   Tạo hàm `detect_liquidity_sweep` trong `market_structure.py` để xác định một cây nến có quét thanh khoản của một đỉnh/đáy trước đó hay không.
+        -   Cập nhật `detect_order_block` trong `pd_arrays.py` để chỉ công nhận một OB nếu nó **quét thanh khoản** VÀ **gây ra phá vỡ cấu trúc (BOS)**.
+    3.  **Nâng cấp #2: Phát hiện Cấu trúc Thị trường (BOS/CHOCH):**
+        -   Thiết kế lại hoàn toàn hàm `detect_bos_choch` trong `market_structure.py`.
+        -   Logic mới theo dõi trạng thái xu hướng (tăng/giảm) và áp dụng định nghĩa chính xác của CHOCH (phá vỡ đáy cũ trong xu hướng tăng, hoặc phá vỡ đỉnh cũ trong xu hướng giảm).
+    4.  **Nâng cấp #3: Tích hợp Breaker Block (BB):**
+        -   Kích hoạt hàm `detect_breaker_block` trong pipeline phân tích của `strategy.py`.
+        -   Thêm logic vào `evaluate_signal` để tìm kiếm và giao dịch theo tín hiệu từ cả Bullish và Bearish Breaker Block.
+    5.  **Nâng cấp #4: Tinh chỉnh Logic Vào lệnh:**
+        -   Cải thiện `evaluate_signal` để yêu cầu tín hiệu xác nhận (CHOCH trên khung thời gian thấp) phải xuất hiện **gần đây** (trong vòng 5 nến cuối) sau khi giá đã đi vào vùng PD Array, thay vì chỉ kiểm tra sự tồn tại của nó.
+    6.  **Nâng cấp #5: Quản lý Rủi ro Động:**
+        -   Loại bỏ hệ thống Stop Loss/Take Profit dựa trên số điểm cố định.
+        -   Sửa đổi `evaluate_signal` để trả về **giá Stop Loss dựa trên cấu trúc** (ví dụ: đáy của Bullish OB).
+        -   Sửa đổi `calculate_position_size` để tính toán khối lượng dựa trên khoảng cách (bằng đô la) tới mức SL động.
+        -   Tính toán `tp_price` dựa trên một **tỷ lệ Rủi ro:Lợi nhuận (RR)** có thể cấu hình.
+    7.  **Gỡ lỗi và Chạy:**
+        -   Cài đặt thư viện `PySide6` còn thiếu.
+        -   Gỡ lỗi `ImportError` do quên thêm `TAKE_PROFIT_RR` vào `config_loader.py`.
+        -   Khắc phục các sự cố đường dẫn khi chạy ứng dụng trên Windows.
+- **Kết quả:** Logic giao dịch của bot đã được tinh chỉnh sâu sắc, приблизительно tuân thủ các nguyên tắc cốt lõi của ICT. Bot hiện là một ứng dụng desktop hoàn chỉnh, sẵn sàng để kiểm tra và giám sát.
