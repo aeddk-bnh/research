@@ -35,13 +35,22 @@ class BotWorker(QThread):
             if self.connector is None: 
                 self.signals.log_message.emit(f"Không thể khởi tạo connector cho nền tảng '{platform}'.")
                 self.signals.bot_status.emit("Lỗi kết nối")
+                self.signals.connection_status.emit("Lỗi khởi tạo")
                 return
 
-            self.connector.connect()
-            self.signals.log_message.emit(f"Đã kết nối thành công với {platform.upper()}.")
+            # Thử kết nối lần đầu
+            self.signals.connection_status.emit("Đang kết nối...")
+            if self.connector.connect():
+                self.signals.log_message.emit(f"Đã kết nối thành công với {platform.upper()}.")
+                self.signals.connection_status.emit("Đã kết nối")
+            else:
+                self.signals.connection_status.emit("Kết nối thất bại")
+                self.signals.bot_status.emit("Lỗi kết nối")
+                return
         except Exception as e:
             self.signals.log_message.emit(f"Lỗi kết nối: {e}")
             self.signals.bot_status.emit("Lỗi kết nối")
+            self.signals.connection_status.emit("Lỗi kết nối")
             return
 
         self.signals.log_message.emit(f"Sử dụng nền tảng: {platform.upper()}")
@@ -57,14 +66,55 @@ class BotWorker(QThread):
 
         try:
              initial_positions = self.connector.get_open_positions()
-             self.previous_position_count = len(initial_positions) if initial_positions else 0
+             # Nếu initial_positions là một list (kể cả list rỗng), len() sẽ hoạt động
+             self.previous_position_count = len(initial_positions) if initial_positions is not None else 0
         except:
              self.previous_position_count = 0
 
+        max_retries = 10
+        retry_delay = 30 # giây
+
         while self._is_running:
             try:
+                # 1. KIỂM TRA VÀ KHÔI PHỤC KẾT NỐI
                 current_positions = self.connector.get_open_positions()
-                current_count = len(current_positions) if current_positions else 0
+                
+                if current_positions is None: # Tín hiệu mất kết nối
+                    self.signals.connection_status.emit("Đang kết nối lại...")
+                    self.signals.log_message.emit("Mất kết nối. Bắt đầu quá trình kết nối lại...")
+                    
+                    is_reconnected = False
+                    for i in range(max_retries):
+                        self.signals.log_message.emit(f"Đang thử kết nối lại lần {i+1}/{max_retries}...")
+                        try:
+                            self.connector.disconnect()
+                            time.sleep(1)
+                            if self.connector.connect():
+                                # Thử lấy lại vị thế để xác nhận kết nối ổn định
+                                if self.connector.get_open_positions() is not None:
+                                    self.signals.log_message.emit("Kết nối lại thành công!")
+                                    self.signals.connection_status.emit("Đã kết nối")
+                                    is_reconnected = True
+                                    break
+                        except Exception as e:
+                            self.signals.log_message.emit(f"Lỗi khi kết nối lại: {e}")
+                        
+                        time.sleep(retry_delay)
+
+                    if not is_reconnected:
+                        self.signals.log_message.emit("Không thể khôi phục kết nối. Dừng bot.")
+                        self.signals.connection_status.emit("Mất kết nối")
+                        self.signals.bot_status.emit("Lỗi kết nối")
+                        break # Thoát khỏi vòng lặp chính
+                    
+                    # Lấy lại vị thế sau khi kết nối lại thành công
+                    current_positions = self.connector.get_open_positions()
+                    if current_positions is None: # Vẫn lỗi sau khi cố gắng
+                         self.signals.log_message.emit("Vẫn không thể lấy dữ liệu sau khi kết nối lại. Dừng bot.")
+                         break
+                
+                # 2. XỬ LÝ LOGIC BOT (KHI ĐÃ CÓ KẾT NỐI)
+                current_count = len(current_positions)
                 
                 if current_count < self.previous_position_count:
                     self.last_trade_close_time = time.time()

@@ -19,10 +19,8 @@
         "take_profit_rr": 2.0,
         "sl_buffer_points": 50.0,
         "symbol": "",
-        
         "ote_enabled": true,
         "ote_level_primary": 0.705,
-        
         "partial_profits_enabled": false,
         "partial_tp1_percent": 50.0,
         "partial_tp1_rr": 1.0,
@@ -92,6 +90,6 @@
     },
     "logging": {
         "log_file": "bot.log",
-        "enable_logging": true
+        "enable_logging": false
     }
 }

@@ -133,12 +133,15 @@ class MT5Connector(BaseConnector):
             self.log(f"[MT5] Lỗi khi đặt lệnh: {e}")
             return None
 
-    def get_open_positions(self) -> bool:
+    def get_open_positions(self) -> list | None:
+        """Lấy danh sách các vị thế đang mở. Trả về list hoặc None nếu lỗi."""
         try:
             positions = mt5.positions_get(symbol=self.symbol)
             if positions is None:
-                return False
-            return len(positions) > 0
+                # Lỗi này có thể do mất kết nối
+                self.log(f"[MT5] Không thể lấy vị thế, có thể đã mất kết nối. Lỗi: {mt5.last_error()}")
+                return None # Sử dụng None để báo hiệu lỗi / mất kết nối
+            return list(positions)
         except Exception as e:
             self.log(f"[MT5] Lỗi khi kiểm tra vị thế: {e}")
-            return False
+            return None

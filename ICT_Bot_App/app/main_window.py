@@ -28,7 +28,9 @@ class MainWindow(QMainWindow):
         self.platform_label = QLabel("Nền tảng: -")
         self.account_label = QLabel("Tài khoản: -")
         self.pnl_label = QLabel("P/L: -")
+        self.connection_status_label = QLabel("Kết nối: -")
         self.status_bar.addPermanentWidget(self.status_label)
+        self.status_bar.addPermanentWidget(self.connection_status_label)
         self.status_bar.addPermanentWidget(self.platform_label)
         self.status_bar.addPermanentWidget(self.account_label)
         self.status_bar.addPermanentWidget(self.pnl_label)
@@ -95,6 +97,17 @@ class MainWindow(QMainWindow):
         self.worker.signals.account_summary.connect(self.update_account_summary)
         self.worker.signals.new_position.connect(self.update_open_positions_table)
         self.worker.signals.position_closed.connect(self.update_history_table)
+        self.worker.signals.connection_status.connect(self.update_connection_status)
+
+    def update_connection_status(self, status: str):
+        """Cập nhật label trạng thái kết nối với màu sắc."""
+        self.connection_status_label.setText(f"Kết nối: {status}")
+        if status == "Đã kết nối":
+            self.connection_status_label.setStyleSheet("color: green;")
+        elif status == "Đang kết nối lại...":
+            self.connection_status_label.setStyleSheet("color: orange;")
+        else: # Mất kết nối, Lỗi, etc.
+            self.connection_status_label.setStyleSheet("color: red;")
 
     def _update_platform_info_from_config(self):
         platform = str(config_manager.get('platform', 'mt5')).upper()
@@ -385,6 +398,19 @@ class MainWindow(QMainWindow):
         self.open_positions_table.setItem(row_position, 5, QTableWidgetItem(f"{float(position_data.get('sl', 0)):.5f}"))
         self.open_positions_table.setItem(row_position, 6, QTableWidgetItem(f"{float(position_data.get('tp', 0)):.5f}"))
 
+        # Ghi log tài khoản khi có lệnh mới
+        self.log_account_balance("Sau khi mở lệnh mới")
+
+    def log_account_balance(self, context: str):
+        """Lấy và ghi log số dư tài khoản hiện tại."""
+        if self.worker and self.worker.isRunning() and self.worker.connector:
+            balance = self.worker.connector.get_account_balance()
+            if balance is not None:
+                self.append_to_log(f"[{context}] Cập nhật tài khoản: Số dư = ${balance:.2f}")
+            else:
+                self.append_to_log(f"[{context}] Không thể lấy thông tin tài khoản.")
+
+
     def update_history_table(self, position_id: str | int, close_data: dict):
         for row in range(self.open_positions_table.rowCount()):
             item = self.open_positions_table.item(row, 0)
@@ -415,6 +441,8 @@ class MainWindow(QMainWindow):
 
                 self.open_positions_table.removeRow(row)
                 self.append_to_log(f"Lệnh {position_id} đã được chuyển sang lịch sử.")
+                # Ghi log tài khoản sau khi đóng lệnh
+                self.log_account_balance("Sau khi đóng lệnh")
                 break
 
     def update_kz_status_from_timer(self):
@@ -423,17 +451,17 @@ class MainWindow(QMainWindow):
         self.kz_status_label.setText(status_str)
 
     def periodic_update(self):
-        if self.worker and self.worker.isRunning() and self.worker.connector:
+        # Chỉ cập nhật số dư và P/L real-time khi có lệnh đang mở
+        if self.worker and self.worker.isRunning() and self.worker.connector and self.open_positions_table.rowCount() > 0:
             current_balance = self.worker.connector.get_account_balance()
             if current_balance is not None:
                 if self.initial_balance == 0.0:
                     self.initial_balance = current_balance
                 pnl = current_balance - self.initial_balance
+                # Chỉ cập nhật UI, không ghi log
                 self.update_account_summary({'balance': current_balance, 'pnl': pnl})
-                self.append_to_log(f"Cập nhật tài khoản: Balance=${current_balance:.2f}, P&L=${pnl:.2f}")
-            else:
-                self.append_to_log("Không thể cập nhật tài khoản.")
         else:
+            # Không làm gì nếu không có lệnh mở
             pass
 
     def save_config(self):

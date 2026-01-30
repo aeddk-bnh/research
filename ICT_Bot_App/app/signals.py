@@ -10,6 +10,9 @@ class WorkerSignals(QObject):
     # Tín hiệu bot_status: Gửi một chuỗi (str) để cập nhật trạng thái bot
     bot_status = Signal(str)
 
+    # Tín hiệu connection_status: Gửi trạng thái kết nối (CONNECTED, DISCONNECTED, RECONNECTING)
+    connection_status = Signal(str)
+
     # Tín hiệu market_bias: Gửi một chuỗi (str) để cập nhật xu hướng thị trường
     market_bias = Signal(str)
 
