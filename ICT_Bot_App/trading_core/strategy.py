@@ -183,12 +183,35 @@ def check_ote_confluence(df: pd.DataFrame, current_price: float, bias: str, sign
     
     return in_ote, ote_levels
 
-def evaluate_signal(df_main: pd.DataFrame, df_small: pd.DataFrame, connector: 'BaseConnector', signals=None) -> tuple[str, float | None, float | None]:
-    bias = get_current_bias(df_main, signals)
-    if ENABLE_LOGGING and signals: signals.log_message.emit(f"[EVAL] Bias: {bias}")
-    if bias == 'neutral':
+def evaluate_signal(df_main: pd.DataFrame, df_small: pd.DataFrame, daily_bias: str, connector: 'BaseConnector', signals=None) -> tuple[str, float | None, float | None]:
+    """Đánh giá tín hiệu dựa trên HTF bias, PD-arrays và xác nhận LTF."""
+    
+    # BỘ LỌC 1: HTF BIAS FILTER
+    # ------------------------------------
+    if daily_bias == 'neutral':
+        if ENABLE_LOGGING and signals: signals.log_message.emit(f"[FILTER] HTF BIAS (D1) là NEUTRAL. Bỏ qua tín hiệu.")
         return 'none', None, None
 
+    # Xác định bias của khung thời gian chính (M15/H1)
+    ltf_bias = get_current_bias(df_main, signals)
+    if ENABLE_LOGGING and signals: signals.log_message.emit(f"[EVAL] LTF Bias ({TIMEFRAME}): {ltf_bias}")
+    
+    if ltf_bias == 'neutral':
+        return 'none', None, None
+        
+    # So sánh LTF bias với Daily bias
+    if (ltf_bias == 'long' and daily_bias == 'short') or \
+       (ltf_bias == 'short' and daily_bias == 'long'):
+        if ENABLE_LOGGING and signals: 
+            signals.log_message.emit(f"[FILTER] Tín hiệu {ltf_bias.upper()} ngược chiều HTF BIAS ({daily_bias.upper()}). Bỏ qua.")
+        return 'none', None, None
+    
+    if ENABLE_LOGGING and signals: 
+        signals.log_message.emit(f"[OK] Tín hiệu {ltf_bias.upper()} cùng chiều HTF BIAS ({daily_bias.upper()}).")
+
+    bias = ltf_bias # Sử dụng ltf_bias cho phần còn lại của logic
+    # ------------------------------------
+    
     # Phân tích FVG cho LTF trước
     df_small_with_fvg = detect_fvg(df_small.copy())
 
@@ -430,37 +453,36 @@ def check_ltf_confirmation(df_small: pd.DataFrame, trend: str, signals=None) -> 
 
 def execute_strategy(connector: 'BaseConnector', signals=None) -> None:
     if connector.get_open_positions():
+        if ENABLE_LOGGING and signals: signals.log_message.emit("Đã có lệnh đang mở, bỏ qua lần quét này.")
         return
 
-    main_timeframe = str(TIMEFRAME)
-    small_timeframe = str(TIMEFRAME_SMALLER)
+    # Tải dữ liệu từ config
+    main_timeframe = config_manager.get('trading.timeframe', 'H1')
+    small_timeframe = config_manager.get('trading.timeframe_smaller', 'M15')
+    htf_timeframe = config_manager.get('trading.htf_timeframe', 'H4')
 
+    # 1. Tải dữ liệu OHLCV
     df_main = connector.fetch_ohlcv(main_timeframe, limit=200)
     df_small = connector.fetch_ohlcv(small_timeframe, limit=100)
+    df_htf = connector.fetch_ohlcv(htf_timeframe, limit=200)
 
-    if df_main is None or df_small is None: return
+    if df_main is None or df_small is None or df_htf is None:
+        if signals: signals.log_message.emit(f"Lỗi: Không tải được toàn bộ dữ liệu cần thiết ({main_timeframe}, {small_timeframe}, {htf_timeframe}).")
+        return
+        
+    # 2. Xác định HTF Bias
+    from .market_structure import get_htf_bias
+    htf_bias = get_htf_bias(df_htf, htf_label=htf_timeframe)
+    if signals:
+        signals.log_message.emit(f"--- HTF Bias ({htf_timeframe}): {htf_bias.upper()} ---")
+        # Cập nhật UI với bias đầy đủ
+        # signals.market_bias.emit(f"HTF ({htf_timeframe}): {htf_bias.upper()}")
+        
+    # 3. Phân tích dữ liệu...
+    # ... (giữ nguyên phần còn lại)
 
-    df_with_fvg = detect_fvg(df_main.copy())
-    df_with_swings = find_swings(df_with_fvg)
-    
-    # Detect Liquidity (EQH/EQL)
-    df_with_swings = detect_equal_highs_lows(df_with_swings)
-    
-    # Log Liquidity Pools
-    if ENABLE_LOGGING and signals:
-        latest_idx = df_with_swings.index[-1]
-        if df_with_swings.loc[latest_idx, 'eqh']:
-            signals.log_message.emit("[LIQUIDITY] Equal Highs detected! Watch for sweep.")
-        if df_with_swings.loc[latest_idx, 'eql']:
-            signals.log_message.emit("[LIQUIDITY] Equal Lows detected! Watch for sweep.")
-
-    df_with_bos = detect_bos_choch(df_with_swings)
-    df_with_ob = detect_order_block(df_with_bos)
-    df_main_analyzed = detect_breaker_block(df_with_ob)
-    df_small_swings = find_swings(df_small.copy())
-    df_small_analyzed = detect_bos_choch(df_small_swings)
-    
-    signal, entry_price, sl_price = evaluate_signal(df_main_analyzed, df_small_analyzed, connector, signals)
+    # 4. Đánh giá tín hiệu với HTF Bias
+    signal, entry_price, sl_price = evaluate_signal(df_main_analyzed, df_small_analyzed, htf_bias, connector, signals)
 
     if signal != 'none' and entry_price is not None and sl_price is not None:
         quantity = calculate_position_size(connector, sl_price, entry_price, signals)

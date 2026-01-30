@@ -147,6 +147,24 @@ def get_recent_swing_range(df: pd.DataFrame, direction: str, lookback: int = 50)
         
         return last_swing_low, last_swing_high
 
+def get_htf_bias(df_htf: pd.DataFrame, htf_label: str = "H4") -> str:
+    """
+    Xác định xu hướng trên khung thời gian lớn (H4 hoặc D1).
+    Trả về: 'long', 'short', hoặc 'neutral'
+    """
+    if df_htf is None or df_htf.empty:
+        return 'neutral'
+    
+    # Phân tích cấu trúc trên khung HTF
+    # Nếu là D1 thì dùng swing ngắn (5), nếu là H4 hoặc nhỏ hơn thì dùng swing dài hơn (10) để bớt nhiễu
+    swing_len = 5 if htf_label.upper() == 'D1' else 10
+    
+    df = find_swings(df_htf.copy(), swing_length=swing_len)
+    df = detect_bos_choch(df)
+    
+    # Lấy bias hiện tại từ cấu trúc vừa phân tích
+    return get_current_bias(df)
+
 def find_swings(df, swing_length=10):
     df['swing_high'] = df['high'].rolling(window=swing_length*2+1, center=True).apply(lambda x: x.iloc[swing_length] if x.iloc[swing_length] == x.max() else np.nan)
     df['swing_low'] = df['low'].rolling(window=swing_length*2+1, center=True).apply(lambda x: x.iloc[swing_length] if x.iloc[swing_length] == x.min() else np.nan)

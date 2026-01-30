@@ -145,3 +145,15 @@ class MT5Connector(BaseConnector):
         except Exception as e:
             self.log(f"[MT5] Lỗi khi kiểm tra vị thế: {e}")
             return None
+
+    def get_all_tradable_symbols(self) -> list[str]:
+        """Lấy tất cả các symbol có thể giao dịch."""
+        try:
+            symbols = mt5.symbols_get()
+            if symbols is not None:
+                # Trả về danh sách tên các symbol
+                return sorted([s.name for s in symbols])
+            return []
+        except Exception as e:
+            self.log(f"[MT5] Lỗi khi lấy danh sách symbol: {e}")
+            return []

@@ -39,6 +39,11 @@ class BaseConnector(ABC):
         pass
 
     @abstractmethod
-    def get_open_positions(self) -> bool:
-        """Kiểm tra xem có vị thế đang mở nào không."""
+    def get_open_positions(self) -> list | None:
+        """Lấy danh sách các vị thế đang mở. Trả về list hoặc None nếu lỗi."""
+        pass
+
+    @abstractmethod
+    def get_all_tradable_symbols(self) -> list[str]:
+        """Lấy danh sách tất cả các symbol có thể giao dịch trên nền tảng."""
         pass

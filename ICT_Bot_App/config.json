@@ -15,6 +15,7 @@
     "trading": {
         "timeframe": "1h",
         "timeframe_smaller": "15m",
+        "htf_timeframe": "H4",
         "risk_percent_per_trade": 1.0,
         "take_profit_rr": 2.0,
         "sl_buffer_points": 50.0,
