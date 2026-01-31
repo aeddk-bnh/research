@@ -139,30 +139,43 @@ class MT5Connector(BaseConnector):
             return None
 
     def _trigger_screenshot(self, order_id: int) -> None:
-        """Tạo file tín hiệu để EA trong MT5 chụp ảnh màn hình."""
+        """Chụp ảnh màn hình biểu đồ trực tiếp bằng Python khi có lệnh mới."""
         try:
-            terminal_info = mt5.terminal_info()
-            if terminal_info is None:
+            # 1. Chuẩn bị thư mục lưu trữ trong project
+            project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            journal_dir = os.path.join(project_dir, "TradeJournal")
+            if not os.path.exists(journal_dir):
+                os.makedirs(journal_dir)
+
+            # 2. Đảm bảo symbol đang được mở trong MT5 để có thể chụp ảnh
+            # Tìm xem có chart nào đang mở symbol này không
+            chart_id = 0
+            charts = mt5.charts_get(symbol=self.symbol)
+            if charts and len(charts) > 0:
+                chart_id = charts[0].chart_id
+            else:
+                # Nếu chưa mở, thử mở một chart mới cho symbol này
+                self.log(f"[JOURNAL] Đang mở biểu đồ mới cho {self.symbol} để chụp ảnh...")
+                chart_id = mt5.chart_open(self.symbol, mt5.TIMEFRAME_M15)
+            
+            if chart_id == 0:
+                self.log(f"[JOURNAL] Không thể mở biểu đồ cho {self.symbol}, bỏ qua chụp ảnh.")
                 return
 
-            # Đường dẫn đến thư mục Common của MT5 (nơi EA đang chờ)
-            # Thường là: C:\Users\<User>\AppData\Roaming\MetaQuotes\Terminal\Common\MQL5\Files\
-            common_path = getattr(terminal_info, 'commondata_path', None)
-            if common_path:
-                signal_dir = os.path.join(common_path, "MQL5", "Files", "ICT_Bot_Signals")
-                
-                # Đảm bảo thư mục tồn tại
-                if not os.path.exists(signal_dir):
-                    os.makedirs(signal_dir)
-                
-                # Tạo file tín hiệu rỗng
-                signal_file = os.path.join(signal_dir, f"new_trade_{order_id}.txt")
-                with open(signal_file, 'w') as f:
-                    f.write(f"Trade ID: {order_id}\nTime: {datetime.now()}")
-                
-                self.log(f"[JOURNAL] Đã gửi tín hiệu chụp ảnh cho lệnh {order_id}")
+            # 3. Chụp ảnh
+            filename = os.path.join(journal_dir, f"trade_{order_id}_entry.png")
+            
+            # Mang biểu đồ lên trên cùng (bring to top)
+            mt5.chart_bring_to_top(chart_id)
+            
+            # Chụp ảnh (0 = toàn bộ chart, 1280x720)
+            if mt5.chart_screen_shot(chart_id, filename, 1280, 720, mt5.CHART_SCREENSHOT_ALL):
+                self.log(f"[JOURNAL] Đã chụp ảnh nhật ký giao dịch: {filename}")
+            else:
+                self.log(f"[JOURNAL] Lỗi khi chụp ảnh: {mt5.last_error()}")
+
         except Exception as e:
-            self.log(f"[JOURNAL] Lỗi khi kích hoạt chụp ảnh: {e}")
+            self.log(f"[JOURNAL] Lỗi khi thực hiện chụp ảnh trực tiếp: {e}")
 
     def get_open_positions(self) -> list | None:
         """Lấy danh sách các vị thế đang mở. Trả về list hoặc None nếu lỗi."""
