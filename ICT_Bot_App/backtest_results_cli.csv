@@ -1,3 +1,2 @@
-entry_time,side,entry_price,exit_price,sl,tp,pnl,close_reason
-2026-01-21 20:05:00,SHORT,89825.05,90076.7,90076.7,89321.75000000001,-100.0,SL
-2026-01-21 21:25:00,SHORT,90018.31,90076.7,90076.7,89901.53,-99.0,SL
+entry_time,side,entry_price,exit_price,sl,tp,pnl,reason
+2024-07-05 07:05:00,SHORT,0.3279,0.32892,0.32892,0.3258600000000001,-100.0,HTF BIAS: SHORT -> Main TF BIAS: SHORT -> Zone: PREMIUM -> OTE: Yes -> POI: Bearish FVG -> POI: Silver Bullet

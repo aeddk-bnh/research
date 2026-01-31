@@ -17,7 +17,11 @@ class MT5Connector(BaseConnector):
         if self.signals:
             self.signals.log_message.emit(message)
         else:
-            print(message)
+            try:
+                print(message)
+            except UnicodeEncodeError:
+                print(message.encode('utf-8', 'ignore').decode('ascii', 'ignore'))
+
 
     def connect(self) -> bool:
         self.log("Đang kết nối tới MetaTrader 5...")
