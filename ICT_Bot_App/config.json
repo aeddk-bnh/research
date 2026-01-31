@@ -3,23 +3,23 @@
     "binance": {
         "api_key": "your_api_key_here",
         "secret_key": "your_secret_key_here",
-        "symbol": "BTC/USDT"
+        "symbol": "ADAUSDm"
     },
     "mt5": {
         "login": 270873003,
         "password": "Mgnaermgnaer1.",
         "server": "Exness-MT5Trial17",
         "path": "C:\\\\Program Files\\\\MetaTrader 5\\\\terminal64.exe",
-        "symbol": "BTCUSDm"
+        "symbol": "ADAUSDm"
     },
     "trading": {
-        "timeframe": "1h",
-        "timeframe_smaller": "15m",
+        "timeframe": "M1",
+        "timeframe_smaller": "M1",
         "htf_timeframe": "H4",
         "risk_percent_per_trade": 1.0,
         "take_profit_rr": 2.0,
         "sl_buffer_points": 50.0,
-        "symbol": "",
+        "symbol": "ADAUSDm",
         "ote_enabled": true,
         "ote_level_primary": 0.705,
         "partial_profits_enabled": false,

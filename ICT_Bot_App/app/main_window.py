@@ -1,5 +1,9 @@
 import sys
+import os
+import subprocess
 import traceback
+import platform
+import random
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
     QPushButton, QLabel, QTextEdit, QTableWidget, QTableWidgetItem, QHeaderView,
@@ -19,7 +23,7 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.setWindowTitle("ICT Trading Bot")
-        self.setGeometry(100, 100, 1000, 750) # Tăng nhẹ chiều cao
+        self.setGeometry(100, 100, 1000, 750)
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -41,13 +45,13 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         main_layout.addWidget(self.tabs)
 
-        # Tabs initialization
+        # Tabs initialization (order matters)
         self.dashboard_tab = self.create_dashboard_tab()
         self.platform_tab = self.create_platform_tab()
-        self.strategy_tab = self.create_strategy_tab() # Sẽ tạo combobox trong này
+        self.strategy_tab = self.create_strategy_tab()
         self.log_tab = self.create_log_tab()
         self.trades_tab = self.create_trades_tab()
-        self.backtesting_tab = self.create_backtesting_tab() # Và trong này
+        self.backtesting_tab = self.create_backtesting_tab()
 
         self.tabs.addTab(self.dashboard_tab, "Dashboard")
         self.tabs.addTab(self.platform_tab, "Nền tảng")
@@ -61,13 +65,12 @@ class MainWindow(QMainWindow):
         self._connect_worker_signals()
         self.initial_balance = 0.0
         
-        # Log setup
-        import os
-        self.log_file_path = str(config_manager.get('logging.log_file', 'bot.log'))
-        log_dir = os.path.dirname(self.log_file_path)
+        # Log file setup
+        log_file_path = str(config_manager.get('logging.log_file', 'bot.log'))
+        log_dir = os.path.dirname(log_file_path)
         if log_dir and not os.path.exists(log_dir):
             os.makedirs(log_dir)
-        self.log_file_handle = open(self.log_file_path, 'a', encoding='utf-8')
+        self.log_file_handle = open(log_file_path, 'a', encoding='utf-8')
 
         # Timers
         self.timer = QTimer(self)
@@ -78,12 +81,12 @@ class MainWindow(QMainWindow):
         self.kz_ui_timer.timeout.connect(self.update_kz_status_from_timer)
         self.kz_ui_timer.start(10000)
 
-        # Initial Updates
+        # Initial data loading
         self.update_kz_status_from_timer()
         self._update_platform_info_from_config()
         
-        # Symbol list update trigger
-        QTimer.singleShot(500, self._update_symbol_list)
+        # Symbol list initialization
+        QTimer.singleShot(1000, self._update_symbol_list)
         self.platform_combo.currentIndexChanged.connect(self._update_symbol_list)
 
     def _connect_worker_signals(self):
@@ -97,26 +100,24 @@ class MainWindow(QMainWindow):
 
     def update_connection_status(self, status: str):
         self.connection_status_label.setText(f"Kết nối: {status}")
-        if status == "Đã kết nối":
-            self.connection_status_label.setStyleSheet("color: green;")
-        elif status == "Đang kết nối lại...":
-            self.connection_status_label.setStyleSheet("color: orange;")
-        else:
-            self.connection_status_label.setStyleSheet("color: red;")
+        color = "green" if status == "Đã kết nối" else "orange" if "..." in status else "red"
+        self.connection_status_label.setStyleSheet(f"color: {color};")
 
     def _update_platform_info_from_config(self):
-        platform = str(config_manager.get('platform', 'mt5')).upper()
-        self.platform_label.setText(f"Nền tảng: {platform}")
-        if platform == 'MT5':
+        platform_name = str(config_manager.get('platform', 'mt5')).upper()
+        self.platform_label.setText(f"Nền tảng: {platform_name}")
+        if platform_name == 'MT5':
             login = config_manager.get('mt5.login', 'N/A')
             self.account_label.setText(f"Tài khoản: {login}")
-        elif platform == 'BINANCE':
+        else:
             symbol = config_manager.get('binance.symbol', 'N/A')
             self.account_label.setText(f"Cặp: {symbol}")
 
     def create_dashboard_tab(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        
+        # Control
         control_group = QGroupBox("Điều khiển")
         control_layout = QHBoxLayout(control_group)
         self.start_stop_button = QPushButton("Bắt đầu Bot")
@@ -124,16 +125,18 @@ class MainWindow(QMainWindow):
         control_layout.addWidget(self.start_stop_button)
         layout.addWidget(control_group)
 
-        status_group = QGroupBox("Trạng thái")
+        # Status
+        status_group = QGroupBox("Trạng thái hiện tại")
         status_layout = QFormLayout(status_group)
         self.bot_status_label = QLabel("Đang dừng")
         self.bias_label = QLabel("-")
         self.kz_status_label = QLabel("-")
-        status_layout.addRow("Trạng thái Bot:", self.bot_status_label)
-        status_layout.addRow("Xu hướng (Bias):", self.bias_label)
+        status_layout.addRow("Bot:", self.bot_status_label)
+        status_layout.addRow("Xu hướng (HTF):", self.bias_label)
         status_layout.addRow("Kill Zone:", self.kz_status_label)
         layout.addWidget(status_group)
 
+        # Account
         account_group = QGroupBox("Tài khoản")
         account_layout = QFormLayout(account_group)
         self.balance_label = QLabel("$0.00")
@@ -142,17 +145,18 @@ class MainWindow(QMainWindow):
         account_layout.addRow("P/L Phiên:", self.pnl_session_label)
         layout.addWidget(account_group)
 
-        kz_schedule_group = QGroupBox("Lịch Kill Zone (EST → UTC+7)")
-        kz_schedule_layout = QVBoxLayout(kz_schedule_group)
+        # KZ Table
+        kz_group = QGroupBox("Lịch Kill Zone (UTC+7)")
+        kz_layout = QVBoxLayout(kz_group)
         self.kz_schedule_table = QTableWidget()
         self.kz_schedule_table.setColumnCount(4)
-        self.kz_schedule_table.setHorizontalHeaderLabels(["Kill Zone", "EST (New York)", "UTC+7 (Việt Nam)", "Trạng thái"])
-        header = self.kz_schedule_table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.kz_schedule_table.setHorizontalHeaderLabels(["Name", "EST", "UTC+7", "Status"])
+        self.kz_schedule_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.kz_schedule_table.setMaximumHeight(180)
-        kz_schedule_layout.addWidget(self.kz_schedule_table)
+        kz_layout.addWidget(self.kz_schedule_table)
         self._populate_kill_zone_table()
-        layout.addWidget(kz_schedule_group)
+        layout.addWidget(kz_group)
+        
         layout.addStretch()
         return widget
 
@@ -163,36 +167,43 @@ class MainWindow(QMainWindow):
             for row, kz in enumerate(kz_list):
                 self.kz_schedule_table.setItem(row, 0, QTableWidgetItem(kz['name']))
                 self.kz_schedule_table.setItem(row, 1, QTableWidgetItem(f"{kz['est_start']} - {kz['est_end']}"))
-                utc7_time = f"{kz['utc7_start']} - {kz['utc7_end']}"
-                if kz.get('utc7_start_next_day') or kz.get('utc7_end_next_day'):
-                    utc7_time += " (+1 ngày)"
-                self.kz_schedule_table.setItem(row, 2, QTableWidgetItem(utc7_time))
-                self.kz_schedule_table.setItem(row, 3, QTableWidgetItem("Bật" if kz['enabled'] else "Tắt"))
-        except Exception as e:
-            print(f"Lỗi populate KZ table: {e}")
+                utc7 = f"{kz['utc7_start']} - {kz['utc7_end']}"
+                if kz.get('utc7_start_next_day') or kz.get('utc7_end_next_day'): utc7 += " (+1d)"
+                self.kz_schedule_table.setItem(row, 2, QTableWidgetItem(utc7))
+                self.kz_schedule_table.setItem(row, 3, QTableWidgetItem("ON" if kz['enabled'] else "OFF"))
+        except Exception: pass
 
     def create_platform_tab(self):
         widget = QWidget()
         layout = QFormLayout(widget)
+        
         self.platform_combo = QComboBox()
         self.platform_combo.addItems(["mt5", "binance"])
         self.platform_combo.setCurrentText(str(config_manager.get('platform', 'mt5')))
         layout.addRow("Nền tảng:", self.platform_combo)
 
-        mt5_group = QGroupBox("Cấu hình MT5")
+        # MT5
+        mt5_group = QGroupBox("Cài đặt MT5")
         mt5_layout = QFormLayout(mt5_group)
         self.mt5_login_input = QLineEdit(str(config_manager.get('mt5.login', '')))
         self.mt5_password_input = QLineEdit(str(config_manager.get('mt5.password', '')))
+        self.mt5_password_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.mt5_server_input = QLineEdit(str(config_manager.get('mt5.server', '')))
         self.mt5_path_input = QLineEdit(str(config_manager.get('mt5.path', '')))
-        self.mt5_password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        mt5_layout.addRow("Login:", self.mt5_login_input)
+        
+        mt5_layout.addRow("Login ID:", self.mt5_login_input)
         mt5_layout.addRow("Password:", self.mt5_password_input)
         mt5_layout.addRow("Server:", self.mt5_server_input)
-        mt5_layout.addRow("Path:", self.mt5_path_input)
+        mt5_layout.addRow("Path to terminal64.exe:", self.mt5_path_input)
+        
+        self.install_ea_btn = QPushButton("Tự động cài đặt EA Chụp Ảnh vào MT5")
+        self.install_ea_btn.setStyleSheet("background-color: #2c3e50; color: white; font-weight: bold;")
+        self.install_ea_btn.clicked.connect(self.auto_install_ea)
+        mt5_layout.addRow(self.install_ea_btn)
         layout.addWidget(mt5_group)
 
-        binance_group = QGroupBox("Cấu hình Binance")
+        # Binance
+        binance_group = QGroupBox("Cài đặt Binance")
         binance_layout = QFormLayout(binance_group)
         self.binance_api_key_input = QLineEdit(str(config_manager.get('binance.api_key', '')))
         self.binance_secret_key_input = QLineEdit(str(config_manager.get('binance.secret_key', '')))
@@ -200,71 +211,73 @@ class MainWindow(QMainWindow):
         binance_layout.addRow("API Key:", self.binance_api_key_input)
         binance_layout.addRow("Secret Key:", self.binance_secret_key_input)
         layout.addWidget(binance_group)
+
         return widget
 
     def create_strategy_tab(self):
         widget = QWidget()
         layout = QFormLayout(widget)
-        timeframe_group = QGroupBox("Cấu trúc Thời gian")
-        timeframe_layout = QFormLayout(timeframe_group)
-        tf_options = ['M1', 'M5', 'M15', 'H1', 'H4', 'D1']
         
+        # Timeframes
+        tf_group = QGroupBox("Cấu trúc Thời gian")
+        tf_layout = QFormLayout(tf_group)
+        options = ['M1', 'M5', 'M15', 'H1', 'H4', 'D1']
         self.htf_timeframe_combo = QComboBox()
-        self.htf_timeframe_combo.addItems(tf_options)
-        self.htf_timeframe_combo.setCurrentText(config_manager.get('trading.htf_timeframe', 'H4'))
+        self.htf_timeframe_combo.addItems(options)
+        self.htf_timeframe_combo.setCurrentText(config_manager.get('trading.htf_timeframe', 'H4') or 'H4')
         
         self.main_timeframe_combo = QComboBox()
-        self.main_timeframe_combo.addItems(tf_options)
-        self.main_timeframe_combo.setCurrentText(config_manager.get('trading.timeframe', 'H1'))
+        self.main_timeframe_combo.addItems(options)
+        self.main_timeframe_combo.setCurrentText(config_manager.get('trading.timeframe', 'M15') or 'M15')
         
         self.ltf_timeframe_combo = QComboBox()
-        self.ltf_timeframe_combo.addItems(tf_options)
-        self.ltf_timeframe_combo.setCurrentText(config_manager.get('trading.timeframe_smaller', 'M15'))
+        self.ltf_timeframe_combo.addItems(options)
+        self.ltf_timeframe_combo.setCurrentText(config_manager.get('trading.timeframe_smaller', 'M1') or 'M1')
         
-        timeframe_layout.addRow("Khung HTF (Bias):", self.htf_timeframe_combo)
-        timeframe_layout.addRow("Khung Chính (PD Array):", self.main_timeframe_combo)
-        timeframe_layout.addRow("Khung Nhỏ (Entry):", self.ltf_timeframe_combo)
-        layout.addWidget(timeframe_group)
+        tf_layout.addRow("Higher TF (Bias):", self.htf_timeframe_combo)
+        tf_layout.addRow("Main TF (Setup):", self.main_timeframe_combo)
+        tf_layout.addRow("Lower TF (Entry):", self.ltf_timeframe_combo)
+        layout.addWidget(tf_group)
 
-        risk_group = QGroupBox("Quản lý Rủi ro & Mục tiêu")
+        # Risk & Symbol
+        risk_group = QGroupBox("Quản lý Rủi ro & Cặp giao dịch")
         risk_layout = QFormLayout(risk_group)
-        
-        # Searchable Symbol Combobox
         self.symbol_input = self._create_searchable_combobox()
-        
         self.risk_spinbox = QDoubleSpinBox()
-        self.risk_spinbox.setRange(0.1, 100.0)
-        self.risk_spinbox.setValue(float(config_manager.get('trading.risk_percent_per_trade', 1.0)))
+        self.risk_spinbox.setRange(0.1, 10.0)
+        self.risk_spinbox.setValue(float(config_manager.get('trading.risk_percent_per_trade', 1.0) or 1.0))
         self.risk_spinbox.setSuffix(" %")
         
         self.tp_rr_spinbox = QDoubleSpinBox()
-        self.tp_rr_spinbox.setRange(0.5, 20.0)
-        self.tp_rr_spinbox.setValue(float(config_manager.get('trading.take_profit_rr', 2.0)))
-        self.tp_rr_spinbox.setPrefix("1 : ")
+        self.tp_rr_spinbox.setRange(0.5, 10.0)
+        self.tp_rr_spinbox.setValue(float(config_manager.get('trading.take_profit_rr', 2.0) or 2.0))
         
         self.sl_buffer_spinbox = QDoubleSpinBox()
-        self.sl_buffer_spinbox.setRange(0, 1000)
-        self.sl_buffer_spinbox.setValue(float(config_manager.get('trading.sl_buffer_points', 50.0)))
-        
+        self.sl_buffer_spinbox.setRange(0, 500)
+        self.sl_buffer_spinbox.setValue(float(config_manager.get('trading.sl_buffer_points', 50.0) or 50.0))
+
         risk_layout.addRow("Cặp giao dịch:", self.symbol_input)
-        risk_layout.addRow("Rủi ro / lệnh:", self.risk_spinbox)
-        risk_layout.addRow("Tỷ lệ R:R (TP):", self.tp_rr_spinbox)
+        risk_layout.addRow("Rủi ro mỗi lệnh:", self.risk_spinbox)
+        risk_layout.addRow("Take Profit (R:R):", self.tp_rr_spinbox)
         risk_layout.addRow("SL Buffer (points):", self.sl_buffer_spinbox)
         layout.addWidget(risk_group)
 
+        # Modules
         adv_group = QGroupBox("Modules Nâng cao")
         adv_layout = QVBoxLayout(adv_group)
-        self.ote_checkbox = QCheckBox("Bật OTE Filter (Fibonacci 62-79%)")
+        self.ote_checkbox = QCheckBox("Bật OTE Fibonacci (62-79%)")
         self.ote_checkbox.setChecked(bool(config_manager.get('trading.ote_enabled', True)))
-        self.partial_profit_checkbox = QCheckBox("Bật chốt lời từng phần (Partial Profits)")
+        self.partial_profit_checkbox = QCheckBox("Bật Chốt lời từng phần (Partial Profits)")
         self.partial_profit_checkbox.setChecked(bool(config_manager.get('trading.partial_profits_enabled', False)))
         adv_layout.addWidget(self.ote_checkbox)
         adv_layout.addWidget(self.partial_profit_checkbox)
         layout.addWidget(adv_group)
 
-        self.save_config_button = QPushButton("Lưu Tất Cả Cấu Hình")
+        self.save_config_button = QPushButton("LƯU TẤT CẢ CẤU HÌNH")
+        self.save_config_button.setStyleSheet("background-color: #27ae60; color: white; font-weight: bold; height: 40px;")
         self.save_config_button.clicked.connect(self.save_config)
         layout.addWidget(self.save_config_button)
+
         return widget
 
     def _create_searchable_combobox(self):
@@ -274,28 +287,26 @@ class MainWindow(QMainWindow):
         return combo
 
     def _update_symbol_list(self):
-        self.append_to_log("Đang tải danh sách cặp giao dịch...")
-        platform = self.platform_combo.currentText()
+        self.append_to_log("Đang tải danh sách symbol từ nền tảng...")
+        platform_name = self.platform_combo.currentText()
         
         class SymbolFetcher(QThread):
             finished = Signal(list)
             def run(self):
                 symbols = []
                 try:
-                    connector = get_connector(platform)
-                    if connector and connector.connect():
-                        symbols = connector.get_all_tradable_symbols()
-                        connector.disconnect()
-                except Exception as e:
-                    print(f"Error fetching symbols: {e}")
+                    conn = get_connector(platform_name)
+                    if conn and conn.connect():
+                        symbols = conn.get_all_tradable_symbols()
+                        conn.disconnect()
+                except Exception: pass
                 self.finished.emit(symbols)
 
         def on_finished(symbols):
             if not symbols:
-                self.append_to_log(f"Không thể lấy danh sách symbol cho {platform.upper()}.")
+                self.append_to_log(f"Không thể tải symbol cho {platform_name.upper()}.")
                 return
-            
-            self.append_to_log(f"Đã tải {len(symbols)} symbols.")
+            self.append_to_log(f"Đã tải thành công {len(symbols)} symbols.")
             for combo in [self.symbol_input, self.bt_symbol_input]:
                 current = combo.currentText()
                 combo.clear()
@@ -304,8 +315,11 @@ class MainWindow(QMainWindow):
                 completer.setFilterMode(Qt.MatchFlag.MatchContains)
                 completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
                 combo.setCompleter(completer)
-                if current in symbols: combo.setCurrentText(current)
-                else: combo.setCurrentText(config_manager.get('trading.symbol', symbols[0]))
+                if current in symbols: 
+                    combo.setCurrentText(current)
+                else: 
+                    symbol_from_config = config_manager.get('trading.symbol', symbols[0])
+                    combo.setCurrentText(symbol_from_config if symbol_from_config else symbols[0])
 
         self.fetcher = SymbolFetcher()
         self.fetcher.finished.connect(on_finished)
@@ -316,12 +330,13 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(widget)
         self.log_text_edit = QTextEdit()
         self.log_text_edit.setReadOnly(True)
+        self.log_text_edit.setStyleSheet("background-color: #1e1e1e; color: #d4d4d4; font-family: Consolas;")
         bottom = QHBoxLayout()
-        self.log_verbose_checkbox = QCheckBox("Verbose Logging")
+        self.log_verbose_checkbox = QCheckBox("Ghi log chi tiết")
         self.log_verbose_checkbox.setChecked(bool(config_manager.get('logging.enable_logging', True)))
         self.log_verbose_checkbox.stateChanged.connect(self.toggle_verbose_logging)
-        clear_btn = QPushButton("Xóa nhật ký")
-        clear_btn.clicked.connect(self.clear_log)
+        clear_btn = QPushButton("Xóa trắng")
+        clear_btn.clicked.connect(lambda: self.log_text_edit.clear())
         bottom.addWidget(self.log_verbose_checkbox)
         bottom.addStretch()
         bottom.addWidget(clear_btn)
@@ -330,23 +345,25 @@ class MainWindow(QMainWindow):
         return widget
 
     def toggle_verbose_logging(self, state):
-        is_checked = state == 2
-        config_manager.set('logging.enable_logging', is_checked)
+        config_manager.set('logging.enable_logging', state == 2)
         config_manager.save_config()
-        self.append_to_log(f"Ghi log chi tiết: {'BẬT' if is_checked else 'TẮT'}")
+        self.append_to_log(f"Ghi log chi tiết: {'BẬT' if state == 2 else 'TẮT'}")
 
     def create_trades_tab(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        open_group = QGroupBox("Lệnh đang mở")
+        
+        # Open
+        open_group = QGroupBox("Vị thế đang mở")
         open_layout = QVBoxLayout(open_group)
         self.open_positions_table = QTableWidget()
         self.open_positions_table.setColumnCount(7)
-        self.open_positions_table.setHorizontalHeaderLabels(["ID", "Cặp tiền", "Loại", "Khối lượng", "Giá vào", "SL", "TP"])
+        self.open_positions_table.setHorizontalHeaderLabels(["ID", "Cặp", "Loại", "Vol", "Entry", "SL", "TP"])
         self.open_positions_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         open_layout.addWidget(self.open_positions_table)
         
-        hist_group = QGroupBox("Lịch sử")
+        # History
+        hist_group = QGroupBox("Lịch sử giao dịch")
         hist_layout = QVBoxLayout(hist_group)
         self.history_table = QTableWidget()
         self.history_table.setColumnCount(9)
@@ -356,6 +373,40 @@ class MainWindow(QMainWindow):
         
         layout.addWidget(open_group)
         layout.addWidget(hist_group)
+        return widget
+
+    def create_backtesting_tab(self):
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        
+        left = QGroupBox("Cấu hình Backtest")
+        left_layout = QFormLayout(left)
+        self.bt_symbol_input = self._create_searchable_combobox()
+        self.bt_timeframe_combo = QComboBox()
+        self.bt_timeframe_combo.addItems(['M1', 'M5', 'M15', 'H1', 'H4', 'D1'])
+        self.bt_start_date = QDateEdit(QDate.currentDate().addMonths(-1))
+        self.bt_end_date = QDateEdit(QDate.currentDate())
+        self.bt_start_btn = QPushButton("Bắt đầu")
+        self.bt_start_btn.clicked.connect(self.start_backtest)
+        
+        left_layout.addRow("Cặp tiền:", self.bt_symbol_input)
+        left_layout.addRow("Timeframe:", self.bt_timeframe_combo)
+        left_layout.addRow("Từ ngày:", self.bt_start_date)
+        left_layout.addRow("Đến ngày:", self.bt_end_date)
+        left_layout.addRow(self.bt_start_btn)
+        
+        right = QGroupBox("Kết quả")
+        right_layout = QVBoxLayout(right)
+        self.bt_progress = QProgressBar()
+        right_layout.addWidget(self.bt_progress)
+        self.bt_trades_table = QTableWidget()
+        self.bt_trades_table.setColumnCount(8)
+        self.bt_trades_table.setHorizontalHeaderLabels(["Time", "Side", "Entry", "Exit", "SL", "TP", "P/L", "Reason"])
+        self.bt_trades_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        right_layout.addWidget(self.bt_trades_table)
+        
+        layout.addWidget(left, 1)
+        layout.addWidget(right, 3)
         return widget
 
     def toggle_bot(self):
@@ -398,16 +449,27 @@ class MainWindow(QMainWindow):
             val = data.get(col, '')
             if isinstance(val, float): val = f"{val:.5f}"
             self.open_positions_table.setItem(row, i, QTableWidgetItem(str(val)))
-        self.log_account_balance("Mở lệnh")
+        self.log_account_balance("VÀO LỆNH")
 
     def log_account_balance(self, context: str):
-        if self.worker and self.worker.isRunning() and self.worker.connector:
+        if self.worker.isRunning() and self.worker.connector:
             balance = self.worker.connector.get_account_balance()
-            if balance: self.append_to_log(f"[{context}] Số dư: ${balance:.2f}")
+            if balance: self.append_to_log(f"[{context}] Cập nhật tài khoản: ${balance:.2f}")
 
     def update_history_table(self, pos_id: str, data: dict):
-        # Implementation to move from open to history
-        pass
+        for row in range(self.open_positions_table.rowCount()):
+            item = self.open_positions_table.item(row, 0)
+            if item and item.text() == str(pos_id):
+                h_row = self.history_table.rowCount()
+                self.history_table.insertRow(h_row)
+                for c in range(7):
+                    cell_item = self.open_positions_table.item(row, c)
+                    self.history_table.setItem(h_row, c, QTableWidgetItem(cell_item.text() if cell_item else ""))
+                self.history_table.setItem(h_row, 5, QTableWidgetItem(f"{data.get('exit_price', 0):.5f}"))
+                self.history_table.setItem(h_row, 8, QTableWidgetItem(f"{data.get('pnl', 0):.2f}"))
+                self.open_positions_table.removeRow(row)
+                self.log_account_balance("ĐÓNG LỆNH")
+                break
 
     def update_kz_status_from_timer(self):
         _, status = get_kill_zone_status()
@@ -429,7 +491,6 @@ class MainWindow(QMainWindow):
             config_manager.set('mt5.path', self.mt5_path_input.text())
             config_manager.set('binance.api_key', self.binance_api_key_input.text())
             config_manager.set('binance.secret_key', self.binance_secret_key_input.text())
-            
             config_manager.set('trading.htf_timeframe', self.htf_timeframe_combo.currentText())
             config_manager.set('trading.timeframe', self.main_timeframe_combo.currentText())
             config_manager.set('trading.timeframe_smaller', self.ltf_timeframe_combo.currentText())
@@ -439,53 +500,149 @@ class MainWindow(QMainWindow):
             config_manager.set('trading.sl_buffer_points', self.sl_buffer_spinbox.value())
             config_manager.set('trading.ote_enabled', self.ote_checkbox.isChecked())
             config_manager.set('trading.partial_profits_enabled', self.partial_profit_checkbox.isChecked())
-            
-            # Sync platform symbols
             config_manager.set('mt5.symbol', self.symbol_input.currentText())
             config_manager.set('binance.symbol', self.symbol_input.currentText())
-            
             config_manager.save_config()
-            self.append_to_log("Đã lưu cấu hình.")
+            self.append_to_log("Cấu hình đã được lưu thành công!")
         except Exception as e:
-            self.append_to_log(f"Lỗi lưu cấu hình: {e}")
+            self.append_to_log(f"Lỗi khi lưu cấu hình: {e}")
 
-    def create_backtesting_tab(self):
-        widget = QWidget()
-        layout = QHBoxLayout(widget)
-        left = QGroupBox("Cấu hình")
-        left_layout = QFormLayout(left)
-        self.bt_symbol_input = self._create_searchable_combobox()
-        self.bt_timeframe_combo = QComboBox()
-        self.bt_timeframe_combo.addItems(['M1', 'M5', 'M15', 'H1', 'H4', 'D1'])
-        self.bt_start_date = QDateEdit(QDate.currentDate().addMonths(-1))
-        self.bt_end_date = QDateEdit(QDate.currentDate())
-        btn = QPushButton("Chạy Backtest")
-        btn.clicked.connect(self.start_backtest)
-        left_layout.addRow("Symbol:", self.bt_symbol_input)
-        left_layout.addRow("Timeframe:", self.bt_timeframe_combo)
-        left_layout.addRow("Từ:", self.bt_start_date)
-        left_layout.addRow("Đến:", self.bt_end_date)
-        left_layout.addRow(btn)
-        
-        right = QGroupBox("Kết quả")
-        right_layout = QVBoxLayout(right)
-        self.bt_progress = QProgressBar()
-        right_layout.addWidget(self.bt_progress)
-        self.bt_trades_table = QTableWidget()
-        self.bt_trades_table.setColumnCount(8)
-        self.bt_trades_table.setHorizontalHeaderLabels(["Thời gian", "Loại", "Entry", "Exit", "SL", "TP", "P/L", "Lý do"])
-        right_layout.addWidget(self.bt_trades_table)
-        
-        layout.addWidget(left, 1)
-        layout.addWidget(right, 3)
-        return widget
+    def auto_install_ea(self):
+        self.append_to_log("[AUTO-INSTALL] Đang bắt đầu cài đặt EA...")
+        try:
+            mt5_path = self.mt5_path_input.text()
+            if not mt5_path or not os.path.exists(mt5_path):
+                QMessageBox.critical(self, "Lỗi", "Đường dẫn terminal64.exe không hợp lệ.")
+                return
+            
+            terminal_dir = os.path.dirname(mt5_path)
+            metaeditor = os.path.join(terminal_dir, "metaeditor64.exe")
+            
+            if not os.path.exists(metaeditor):
+                self.append_to_log(f"[LỖI] Không tìm thấy MetaEditor tại: {metaeditor}")
+                return
+
+            appdata = os.getenv('APPDATA')
+            if not appdata:
+                self.append_to_log("[LỖI] Không thể truy cập thư mục APPDATA.")
+                return
+
+            base_terminal = os.path.join(appdata, 'MetaQuotes', 'Terminal')
+            
+            if not os.path.exists(base_terminal):
+                self.append_to_log("[LỖI] Không tìm thấy thư mục dữ liệu MetaQuotes.")
+                return
+
+            # Tìm thư mục MQL5 của terminal hiện tại
+            data_dirs = []
+            self.append_to_log("Đang tìm kiếm thư mục dữ liệu MT5...")
+            
+            # Quét tất cả các folder terminal để tìm folder hợp lệ nhất
+            for d in os.listdir(base_terminal):
+                p = os.path.join(base_terminal, d)
+                if os.path.isdir(p):
+                    mql5_path = os.path.join(p, "MQL5")
+                    if os.path.exists(mql5_path):
+                        # Lấy thời gian sửa đổi cuối cùng để ưu tiên folder đang dùng
+                        mtime = os.path.getmtime(p)
+                        
+                        # Kiểm tra origin.txt (nếu có)
+                        is_exact_match = False
+                        origin_file = os.path.join(p, "origin.txt")
+                        if os.path.exists(origin_file):
+                            try:
+                                with open(origin_file, 'r', encoding='utf-16le') as f:
+                                    origin_path = f.read().strip().replace('\x00', '')
+                                    if origin_path.lower().rstrip('\\') == terminal_dir.lower().rstrip('\\'):
+                                        is_exact_match = True
+                            except Exception: pass
+                        
+                        data_dirs.append({
+                            'path': mql5_path,
+                            'mtime': mtime,
+                            'exact': is_exact_match
+                        })
+            
+            # Sắp xếp: Ưu tiên exact match, sau đó đến folder mới nhất
+            data_dirs.sort(key=lambda x: (x['exact'], x['mtime']), reverse=True)
+
+            if not data_dirs:
+                self.append_to_log("[LỖI] Không thể xác định thư mục MQL5 của MT5 này.")
+                return
+            
+            data_dir = data_dirs[0]['path']
+            self.append_to_log(f"Sử dụng thư mục dữ liệu: {os.path.dirname(data_dir)}")
+
+            experts_dir = os.path.join(data_dir, "Experts", "ICTBot")
+            os.makedirs(experts_dir, exist_ok=True)
+            
+            ea_path = os.path.join(experts_dir, "ScreenShotEA.mq5")
+            with open(ea_path, "w", encoding="utf-8") as f:
+                f.write(self._get_ea_source_code())
+            
+            self.append_to_log(f"Đã tạo mã nguồn tại: {ea_path}")
+            
+            self.append_to_log("Đang biên dịch... (vui lòng đợi)")
+            log_file = os.path.join(experts_dir, "compile.log")
+            
+            # Chạy biên dịch (dùng dấu ngoặc kép cho path có khoảng trắng)
+            cmd = f'"{metaeditor}" /compile:"{ea_path}" /log:"{log_file}"'
+            self.append_to_log(f"Lệnh: {cmd}")
+            
+            process = subprocess.Popen(cmd, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            process.wait(timeout=30)
+            
+            if os.path.exists(log_file):
+                try:
+                    with open(log_file, 'r', encoding='utf-16le') as f:
+                        compile_output = f.read()
+                    self.append_to_log("--- KẾT QUẢ BIÊN DỊCH ---")
+                    self.append_to_log(compile_output.strip())
+                    self.append_to_log("-------------------------")
+                except Exception as e:
+                    self.append_to_log(f"Không thể đọc file log biên dịch: {e}")
+
+            ex5_path = ea_path.replace(".mq5", ".ex5")
+            if os.path.exists(ex5_path):
+                QMessageBox.information(self, "Thành công", 
+                    f"Đã cài đặt thành công!\\n\\nFile: {os.path.basename(ex5_path)}\\nThư mục: {experts_dir}\\n\\nHãy chuột phải vào 'Expert Advisors' trong MT5 -> Refresh.")
+            else:
+                self.append_to_log("[LỖI] File .ex5 không được tạo ra. Kiểm tra log biên dịch ở trên.")
+                
+        except Exception as e:
+            self.append_to_log(f"[CRITICAL ERROR] {str(e)}")
+            traceback.print_exc()
+
+    def _get_ea_source_code(self):
+        return """// ScreenShotEA
+#property version "1.00"
+#property strict
+input string Folder="ICT_Bot_Signals";
+input string Journal="ICT_Bot_Journal";
+int OnInit(){ EventSetTimer(1); FolderCreate(Folder,0); FolderCreate(Journal,0); return(INIT_SUCCEEDED); }
+void OnTimer(){
+   string name; long handle=FileFindFirst(Folder+"\\\\*.txt",name,0);
+   if(handle!=INVALID_HANDLE){
+      do{
+         string id=StringSubstr(name,10,StringLen(name)-14);
+         if(ChartScreenShot(0,Journal+"\\\\trade_"+id+"_entry.png",1280,720)) FileDelete(Folder+"\\\\"+name,0);
+      }while(FileFindNext(handle,name));
+      FileFindClose(handle);
+   }
+}"""
 
     def start_backtest(self):
-        # Implementation same as before but using .currentText() for symbol
-        pass
-
-    def clear_log(self):
-        self.log_text_edit.clear()
+        params = {
+            'symbol': self.bt_symbol_input.currentText(),
+            'timeframe': self.bt_timeframe_combo.currentText(),
+            'start_date': self.bt_start_date.date().toPython(),
+            'end_date': self.bt_end_date.date().toPython(),
+        }
+        self.bt_worker = BacktestWorker(params)
+        self.bt_worker.signals.progress.connect(self.bt_progress.setValue)
+        self.bt_worker.signals.log_message.connect(self.append_to_log)
+        self.bt_worker.start()
+        self.bt_start_btn.setEnabled(False)
 
     def closeEvent(self, event: QCloseEvent):
         if hasattr(self, 'log_file_handle'): self.log_file_handle.close()

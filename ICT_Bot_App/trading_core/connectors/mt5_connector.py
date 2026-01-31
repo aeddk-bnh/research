@@ -1,6 +1,7 @@
 import MetaTrader5 as mt5 # type: ignore
 import pandas as pd
 import pytz
+import os # Thêm import os
 from datetime import datetime
 from .base_connector import BaseConnector
 from ..config_loader import MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, MT5_PATH, MT5_SYMBOL
@@ -116,6 +117,10 @@ class MT5Connector(BaseConnector):
                 return None
             
             self.log(f"[MT5] Đã đặt lệnh thành công. Order ID: {result.order}")
+            
+            # Kích hoạt chụp ảnh màn hình qua EA
+            self._trigger_screenshot(result.order)
+
             # Phát tín hiệu lệnh mới
             if self.signals:
                 self.signals.new_position.emit({
@@ -132,6 +137,32 @@ class MT5Connector(BaseConnector):
         except Exception as e:
             self.log(f"[MT5] Lỗi khi đặt lệnh: {e}")
             return None
+
+    def _trigger_screenshot(self, order_id: int) -> None:
+        """Tạo file tín hiệu để EA trong MT5 chụp ảnh màn hình."""
+        try:
+            terminal_info = mt5.terminal_info()
+            if terminal_info is None:
+                return
+
+            # Đường dẫn đến thư mục Common của MT5 (nơi EA đang chờ)
+            # Thường là: C:\Users\<User>\AppData\Roaming\MetaQuotes\Terminal\Common\MQL5\Files\
+            common_path = getattr(terminal_info, 'commondata_path', None)
+            if common_path:
+                signal_dir = os.path.join(common_path, "MQL5", "Files", "ICT_Bot_Signals")
+                
+                # Đảm bảo thư mục tồn tại
+                if not os.path.exists(signal_dir):
+                    os.makedirs(signal_dir)
+                
+                # Tạo file tín hiệu rỗng
+                signal_file = os.path.join(signal_dir, f"new_trade_{order_id}.txt")
+                with open(signal_file, 'w') as f:
+                    f.write(f"Trade ID: {order_id}\nTime: {datetime.now()}")
+                
+                self.log(f"[JOURNAL] Đã gửi tín hiệu chụp ảnh cho lệnh {order_id}")
+        except Exception as e:
+            self.log(f"[JOURNAL] Lỗi khi kích hoạt chụp ảnh: {e}")
 
     def get_open_positions(self) -> list | None:
         """Lấy danh sách các vị thế đang mở. Trả về list hoặc None nếu lỗi."""
