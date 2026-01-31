@@ -573,7 +573,16 @@ class MainWindow(QMainWindow):
             data_dir = data_dirs[0]['path']
             self.append_to_log(f"Sử dụng thư mục dữ liệu: {os.path.dirname(data_dir)}")
 
-            experts_dir = os.path.join(data_dir, "Experts", "ICTBot")
+            # Kiểm tra xem có thư mục con 'Advisors' không
+            base_experts_dir = os.path.join(data_dir, "Experts")
+            advisors_subdir = os.path.join(base_experts_dir, "Advisors")
+            
+            target_install_dir = base_experts_dir
+            if os.path.isdir(advisors_subdir):
+                self.append_to_log("Phát hiện thư mục 'Advisors' chuyên dụng. Sẽ cài đặt vào đó.")
+                target_install_dir = advisors_subdir
+
+            experts_dir = os.path.join(target_install_dir, "ICTBot")
             os.makedirs(experts_dir, exist_ok=True)
             
             ea_path = os.path.join(experts_dir, "ScreenShotEA.mq5")
