@@ -352,8 +352,8 @@ class MainWindow(QMainWindow):
         open_group = QGroupBox("Vị thế đang mở")
         open_layout = QVBoxLayout(open_group)
         self.open_positions_table = QTableWidget()
-        self.open_positions_table.setColumnCount(7)
-        self.open_positions_table.setHorizontalHeaderLabels(["ID", "Cặp", "Loại", "Vol", "Entry", "SL", "TP"])
+        self.open_positions_table.setColumnCount(8)
+        self.open_positions_table.setHorizontalHeaderLabels(["ID", "Cặp", "Loại", "Vol", "Entry", "SL", "TP", "Reason"])
         self.open_positions_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         open_layout.addWidget(self.open_positions_table)
         
@@ -361,8 +361,8 @@ class MainWindow(QMainWindow):
         hist_group = QGroupBox("Lịch sử giao dịch")
         hist_layout = QVBoxLayout(hist_group)
         self.history_table = QTableWidget()
-        self.history_table.setColumnCount(9)
-        self.history_table.setHorizontalHeaderLabels(["ID", "Cặp", "Loại", "Vol", "Entry", "Exit", "SL", "TP", "P/L"])
+        self.history_table.setColumnCount(10)
+        self.history_table.setHorizontalHeaderLabels(["ID", "Cặp", "Loại", "Vol", "Entry", "Exit", "SL", "TP", "P/L", "Reason"])
         self.history_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         hist_layout.addWidget(self.history_table)
         
@@ -406,8 +406,11 @@ class MainWindow(QMainWindow):
 
     def toggle_bot(self):
         if self.worker.isRunning():
+            self.start_stop_button.setEnabled(False)
+            self.start_stop_button.setText("Đang dừng...")
             self.worker.stop()
             self.start_stop_button.setText("Bắt đầu Bot")
+            self.start_stop_button.setEnabled(True)
             self.status_label.setText("Trạng thái: Đã dừng")
         else:
             self.worker = BotWorker()
@@ -439,7 +442,7 @@ class MainWindow(QMainWindow):
     def update_open_positions_table(self, data: dict):
         row = self.open_positions_table.rowCount()
         self.open_positions_table.insertRow(row)
-        cols = ['id', 'symbol', 'side', 'quantity', 'entry_price', 'sl', 'tp']
+        cols = ['id', 'symbol', 'side', 'quantity', 'entry_price', 'sl', 'tp', 'reason']
         for i, col in enumerate(cols):
             val = data.get(col, '')
             if isinstance(val, float): val = f"{val:.5f}"
@@ -457,11 +460,19 @@ class MainWindow(QMainWindow):
             if item and item.text() == str(pos_id):
                 h_row = self.history_table.rowCount()
                 self.history_table.insertRow(h_row)
-                for c in range(7):
+                for c in range(8): # ID, Cặp, Loại, Vol, Entry, SL, TP, Reason
                     cell_item = self.open_positions_table.item(row, c)
-                    self.history_table.setItem(h_row, c, QTableWidgetItem(cell_item.text() if cell_item else ""))
-                self.history_table.setItem(h_row, 5, QTableWidgetItem(f"{data.get('exit_price', 0):.5f}"))
-                self.history_table.setItem(h_row, 8, QTableWidgetItem(f"{data.get('pnl', 0):.2f}"))
+                    # Mapping columns from open table (0-7) to history table (0,1,2,3,4, 6,7, 9)
+                    # Open indices: 0:ID, 1:Symbol, 2:Side, 3:Qty, 4:Entry, 5:SL, 6:TP, 7:Reason
+                    # Hist indices: 0:ID, 1:Symbol, 2:Side, 3:Qty, 4:Entry, 5:Exit, 6:SL, 7:TP, 8:PnL, 9:Reason
+                    target_col = c
+                    if c == 5: target_col = 6 # SL
+                    if c == 6: target_col = 7 # TP
+                    if c == 7: target_col = 9 # Reason
+                    self.history_table.setItem(h_row, target_col, QTableWidgetItem(cell_item.text() if cell_item else ""))
+                
+                self.history_table.setItem(h_row, 5, QTableWidgetItem(f"{data.get('exit_price', 0):.5f}")) # Exit Price
+                self.history_table.setItem(h_row, 8, QTableWidgetItem(f"{data.get('pnl', 0):.2f}")) # PnL
                 self.open_positions_table.removeRow(row)
                 self.log_account_balance("ĐÓNG LỆNH")
                 break

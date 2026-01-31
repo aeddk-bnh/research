@@ -2,7 +2,7 @@ from .market_structure import (
     get_current_bias, detect_bos_choch, find_swings, get_dealing_range, 
     is_in_premium_or_discount, calculate_ote_levels, is_price_in_ote_zone, 
     get_recent_swing_range, detect_equal_highs_lows, detect_liquidity_sweep,
-    get_htf_bias
+    get_htf_bias, get_htf_liquidity_levels, get_draw_on_liquidity
 )
 from .pd_arrays import detect_fvg, detect_order_block, detect_breaker_block
 from .silver_bullet import detect_silver_bullet_setup
@@ -142,6 +142,14 @@ def evaluate_signal(df_main: pd.DataFrame, df_small: pd.DataFrame, daily_bias: s
 
     if daily_bias == 'neutral':
         return 'none', None, None, "HTF Bias is Neutral"
+    
+    # --- Advanced Liquidity Detection ---
+    htf_levels = get_htf_liquidity_levels(connector)
+    df_main = detect_equal_highs_lows(df_main)
+    dol_price, dol_type = get_draw_on_liquidity(df_main, daily_bias, htf_levels)
+    if dol_price:
+        reason_parts.append(f"DOL: {dol_type} ({dol_price:.5f})")
+    # ------------------------------------
 
     ltf_bias = get_current_bias(df_main, signals)
     reason_parts.append(f"Main TF BIAS: {ltf_bias.upper()}")
@@ -196,7 +204,8 @@ def evaluate_signal(df_main: pd.DataFrame, df_small: pd.DataFrame, daily_bias: s
                     if latest_low <= poi_data['ob_zone_high']: found_poi = True
             
             if found_poi and poi_data is not None:
-                reason_parts.append(f"POI: Bullish {poi_type}")
+                sweep_info = f" (Sweep: {poi_data['liquidity_sweep']})" if 'liquidity_sweep' in poi_data and poi_data['liquidity_sweep'] != 'none' else ""
+                reason_parts.append(f"POI: Bullish {poi_type}{sweep_info}")
                 found_ltf, entry, ltf_reason = check_ltf_confirmation(df_small_with_fvg, 'bullish', signals)
                 if found_ltf:
                     reason_parts.append(f"Confirm: {ltf_reason}")
@@ -234,7 +243,8 @@ def evaluate_signal(df_main: pd.DataFrame, df_small: pd.DataFrame, daily_bias: s
                     if latest_high >= poi_data['ob_zone_low']: found_poi = True
             
             if found_poi and poi_data is not None:
-                reason_parts.append(f"POI: Bearish {poi_type}")
+                sweep_info = f" (Sweep: {poi_data['liquidity_sweep']})" if 'liquidity_sweep' in poi_data and poi_data['liquidity_sweep'] != 'none' else ""
+                reason_parts.append(f"POI: Bearish {poi_type}{sweep_info}")
                 found_ltf, entry, ltf_reason = check_ltf_confirmation(df_small_with_fvg, 'bearish', signals)
                 if found_ltf:
                     reason_parts.append(f"Confirm: {ltf_reason}")
@@ -348,10 +358,10 @@ def execute_strategy(connector: 'BaseConnector', signals=None) -> None:
             
             if PARTIAL_PROFITS_ENABLED:
                 for i, order in enumerate(partial_orders):
-                    connector.place_order(signal, order['quantity'], sl_price, order['tp'])
+                    connector.place_order(signal, order['quantity'], sl_price, order['tp'], comment=reason)
             else:
                 rr = float(TAKE_PROFIT_RR)
                 sl_distance = abs(entry_price - sl_price)
                 tp_price = entry_price + (sl_distance * rr) if signal == 'long' else entry_price - (sl_distance * rr)
                 
-                connector.place_order(signal, quantity, sl_price, tp_price)
+                connector.place_order(signal, quantity, sl_price, tp_price, comment=reason)

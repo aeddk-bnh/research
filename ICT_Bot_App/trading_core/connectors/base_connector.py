@@ -34,7 +34,7 @@ class BaseConnector(ABC):
         pass
 
     @abstractmethod
-    def place_order(self, order_type: str, quantity: float, sl_price: float, tp_price: float) -> str | int | None:
+    def place_order(self, order_type: str, quantity: float, sl_price: float, tp_price: float, comment: str = "") -> str | int | None:
         """Đặt một lệnh giao dịch."""
         pass
 

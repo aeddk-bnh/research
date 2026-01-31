@@ -67,6 +67,7 @@ class MT5Connector(BaseConnector):
             tf_map = {
                 'M1': mt5.TIMEFRAME_M1, 'M5': mt5.TIMEFRAME_M5, 'M15': mt5.TIMEFRAME_M15,
                 'H1': mt5.TIMEFRAME_H1, 'H4': mt5.TIMEFRAME_H4, 'D1': mt5.TIMEFRAME_D1,
+                'W1': mt5.TIMEFRAME_W1,
                 # Add old keys for compatibility if needed, but new UI uses the above
                 '1m': mt5.TIMEFRAME_M1, '5m': mt5.TIMEFRAME_M5, '15m': mt5.TIMEFRAME_M15,
                 '1h': mt5.TIMEFRAME_H1, '4h': mt5.TIMEFRAME_H4, '1d': mt5.TIMEFRAME_D1,
@@ -85,7 +86,7 @@ class MT5Connector(BaseConnector):
             self.log(f"[MT5] Lỗi khi lấy dữ liệu OHLCV: {e}")
             return None
 
-    def place_order(self, order_type: str, quantity: float, sl_price: float, tp_price: float) -> str | int | None:
+    def place_order(self, order_type: str, quantity: float, sl_price: float, tp_price: float, comment: str = "") -> str | int | None:
         symbol_info = self.get_symbol_info()
         if symbol_info is None:
             self.log(f"[MT5] Không tìm thấy thông tin symbol: {self.symbol}")
@@ -109,7 +110,7 @@ class MT5Connector(BaseConnector):
             "tp": float(tp_price),
             "deviation": 20, # Deviation trong points
             "magic": 234000,
-            "comment": "ICT Bot Order",
+            "comment": comment if comment else "ICT Bot Order",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_IOC, # Immediate or Cancel
         }
@@ -135,6 +136,7 @@ class MT5Connector(BaseConnector):
                     'entry_price': result.price, # Giá thực tế của lệnh
                     'sl': sl_price,
                     'tp': tp_price,
+                    'reason': comment or 'N/A',
                     'status': 'OPEN'
                 })
             return result.order

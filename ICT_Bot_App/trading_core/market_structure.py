@@ -198,43 +198,158 @@ def detect_liquidity_sweep(df, index, lookback=20):
 
 
 def detect_equal_highs_lows(df, threshold_percent=0.0005, lookback=50):
+    """
+    Phát hiện Equal Highs (EQH) và Equal Lows (EQL).
+    EQH/EQL là các vùng thanh khoản quan trọng (Double Tops/Bottoms).
+    """
     df['eqh'] = False
     df['eql'] = False
+    df['liquidity_level'] = np.nan
     
     if 'swing_high' not in df.columns or 'swing_low' not in df.columns:
         return df
         
-    recent_df = df.iloc[-lookback:]
+    # Lấy subset gần nhất để tính toán
+    recent_indices = df.index[-lookback:]
     
-    swing_highs = recent_df[recent_df['swing_high'].notna()]
-    swing_highs = cast(pd.DataFrame, swing_highs)
+    swing_highs = df.loc[recent_indices][df.loc[recent_indices, 'swing_high'].notna()]
     if len(swing_highs) >= 2:
-        latest_high = swing_highs.iloc[-1]['swing_high']
-        latest_idx = swing_highs.index[-1]
-        
-        for idx, row in swing_highs.iloc[:-1].iterrows():
-            prev_high = row['swing_high']
-            diff = abs(latest_high - prev_high)
-            
-            if diff <= latest_high * threshold_percent:
-                df.loc[latest_idx, 'eqh'] = True
-                df.loc[idx, 'eqh'] = True
+        for i in range(len(swing_highs)):
+            for j in range(i + 1, len(swing_highs)):
+                h1 = swing_highs.iloc[i]['swing_high']
+                h2 = swing_highs.iloc[j]['swing_high']
+                idx1 = swing_highs.index[i]
+                idx2 = swing_highs.index[j]
                 
-    swing_lows = recent_df[recent_df['swing_low'].notna()]
-    swing_lows = cast(pd.DataFrame, swing_lows)
+                diff = abs(h1 - h2)
+                avg = (h1 + h2) / 2
+                
+                if diff <= avg * threshold_percent:
+                    df.loc[idx1, 'eqh'] = True
+                    df.loc[idx2, 'eqh'] = True
+                    df.loc[idx1, 'liquidity_level'] = avg
+                    df.loc[idx2, 'liquidity_level'] = avg
+                    
+    swing_lows = df.loc[recent_indices][df.loc[recent_indices, 'swing_low'].notna()]
     if len(swing_lows) >= 2:
-        latest_low = swing_lows.iloc[-1]['swing_low']
-        latest_idx = swing_lows.index[-1]
-        
-        for idx, row in swing_lows.iloc[:-1].iterrows():
-            prev_low = row['swing_low']
-            diff = abs(latest_low - prev_low)
-            
-            if diff <= latest_low * threshold_percent:
-                df.loc[latest_idx, 'eql'] = True
-                df.loc[idx, 'eql'] = True
+        for i in range(len(swing_lows)):
+            for j in range(i + 1, len(swing_lows)):
+                l1 = swing_lows.iloc[i]['swing_low']
+                l2 = swing_lows.iloc[j]['swing_low']
+                idx1 = swing_lows.index[i]
+                idx2 = swing_lows.index[j]
+                
+                diff = abs(l1 - l2)
+                avg = (l1 + l2) / 2
+                
+                if diff <= avg * threshold_percent:
+                    df.loc[idx1, 'eql'] = True
+                    df.loc[idx2, 'eql'] = True
+                    df.loc[idx1, 'liquidity_level'] = avg
+                    df.loc[idx2, 'liquidity_level'] = avg
                 
     return df
+
+
+def get_htf_liquidity_levels(connector: Any) -> dict:
+    """
+    Lấy các mức thanh khoản quan trọng từ HTF: PDH, PDL, PWH, PWL.
+    """
+    levels = {}
+    
+    try:
+        # 1. Previous Day High/Low (PDH/PDL)
+        df_daily = connector.fetch_ohlcv('D1', limit=5)
+        if df_daily is not None and len(df_daily) >= 2:
+            prev_day = df_daily.iloc[-2]  # Nến ngày hôm qua
+            levels['pdh'] = prev_day['high']
+            levels['pdl'] = prev_day['low']
+            levels['pd_mid'] = (prev_day['high'] + prev_day['low']) / 2
+            
+        # 2. Previous Week High/Low (PWH/PWL)
+        # Lưu ý: MT5 có thể không hỗ trợ W1 trực tiếp qua map đơn giản, 
+        # nhưng thường là TIMEFRAME_W1
+        df_weekly = connector.fetch_ohlcv('W1', limit=2)
+        if df_weekly is not None and len(df_weekly) >= 2:
+            prev_week = df_weekly.iloc[-2]
+            levels['pwh'] = prev_week['high']
+            levels['pwl'] = prev_week['low']
+            
+    except Exception:
+        pass
+        
+    return levels
+
+
+def get_draw_on_liquidity(df: pd.DataFrame, bias: str, htf_levels: dict) -> tuple[float | None, str]:
+    """
+    Xác định 'Draw on Liquidity' (DOL) - Mục tiêu giá đang hướng tới.
+    
+    Logic:
+    - Nếu bias LONG: DOL là EQH gần nhất, PDH, hoặc PWH bên trên giá hiện tại.
+    - Nếu bias SHORT: DOL là EQL gần nhất, PDL, hoặc PWL bên dưới giá hiện tại.
+    """
+    if df.empty: return None, "none"
+    
+    latest_price = df['close'].iloc[-1]
+    dol_price = None
+    dol_type = "none"
+    
+    if bias == 'long':
+        # Tìm mục tiêu bên trên
+        potential_targets = []
+        
+        # 1. PDH, PWH
+        if 'pdh' in htf_levels and htf_levels['pdh'] > latest_price:
+            potential_targets.append((htf_levels['pdh'], 'PDH'))
+        if 'pwh' in htf_levels and htf_levels['pwh'] > latest_price:
+            potential_targets.append((htf_levels['pwh'], 'PWH'))
+            
+        # 2. EQH từ df
+        eqhs = df[df['eqh'] == True]['liquidity_level'].dropna().unique()
+        for level in eqhs:
+            if level > latest_price:
+                potential_targets.append((level, 'EQH'))
+        
+        # 3. Old Highs (Swing Highs chưa bị quét)
+        swing_highs = df[df['swing_high'].notna()]['swing_high'].unique()
+        for level in swing_highs:
+            if level > latest_price:
+                potential_targets.append((level, 'Swing High'))
+                
+        if potential_targets:
+            # Ưu tiên mục tiêu gần nhất bên trên
+            potential_targets.sort(key=lambda x: x[0])
+            dol_price, dol_type = potential_targets[0]
+            
+    elif bias == 'short':
+        # Tìm mục tiêu bên dưới
+        potential_targets = []
+        
+        # 1. PDL, PWL
+        if 'pdl' in htf_levels and htf_levels['pdl'] < latest_price:
+            potential_targets.append((htf_levels['pdl'], 'PDL'))
+        if 'pwl' in htf_levels and htf_levels['pwl'] < latest_price:
+            potential_targets.append((htf_levels['pwl'], 'PWL'))
+            
+        # 2. EQL từ df
+        eqls = df[df['eql'] == True]['liquidity_level'].dropna().unique()
+        for level in eqls:
+            if level < latest_price:
+                potential_targets.append((level, 'EQL'))
+        
+        # 3. Old Lows
+        swing_lows = df[df['swing_low'].notna()]['swing_low'].unique()
+        for level in swing_lows:
+            if level < latest_price:
+                potential_targets.append((level, 'Swing Low'))
+                
+        if potential_targets:
+            # Ưu tiên mục tiêu gần nhất bên dưới
+            potential_targets.sort(key=lambda x: x[0], reverse=True)
+            dol_price, dol_type = potential_targets[0]
+            
+    return dol_price, dol_type
 
 
 def detect_bos_choch(df):

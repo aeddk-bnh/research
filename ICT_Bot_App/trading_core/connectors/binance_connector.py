@@ -94,7 +94,7 @@ class BinanceConnector(BaseConnector):
             self.log(f"[Binance] Lỗi khi lấy dữ liệu OHLCV: {e}")
             return None
 
-    def place_order(self, order_type: str, quantity: float, sl_price: float, tp_price: float) -> str | int | None:
+    def place_order(self, order_type: str, quantity: float, sl_price: float, tp_price: float, comment: str = "") -> str | int | None:
         try:
             side = 'buy' if order_type == 'long' else 'sell'
             market_order = self.exchange.create_market_order(self.symbol, side, quantity)
@@ -126,6 +126,7 @@ class BinanceConnector(BaseConnector):
                     'entry_price': market_order.get('price', 0), # Giá thực tế của lệnh
                     'sl': sl_price,
                     'tp': tp_price,
+                    'reason': comment or 'N/A',
                     'status': 'OPEN'
                 })
             return order_id

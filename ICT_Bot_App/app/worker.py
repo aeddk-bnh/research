@@ -34,8 +34,7 @@ class BotWorker(QThread):
             self.connector = get_connector(platform, signals=self.signals)
             if self.connector is None: 
                 self.signals.log_message.emit(f"Không thể khởi tạo connector cho nền tảng '{platform}'.")
-                self.signals.bot_status.emit("Lỗi kết nối")
-                self.signals.connection_status.emit("Lỗi khởi tạo")
+                self.signals.bot_status.emit("Lỗi cấu hình")
                 return
 
             # Thử kết nối lần đầu
@@ -66,7 +65,6 @@ class BotWorker(QThread):
 
         try:
              initial_positions = self.connector.get_open_positions()
-             # Nếu initial_positions là một list (kể cả list rỗng), len() sẽ hoạt động
              self.previous_position_count = len(initial_positions) if initial_positions is not None else 0
         except:
              self.previous_position_count = 0
@@ -85,12 +83,12 @@ class BotWorker(QThread):
                     
                     is_reconnected = False
                     for i in range(max_retries):
+                        if not self._is_running: break
                         self.signals.log_message.emit(f"Đang thử kết nối lại lần {i+1}/{max_retries}...")
                         try:
                             self.connector.disconnect()
-                            time.sleep(1)
+                            self.msleep(1000)
                             if self.connector.connect():
-                                # Thử lấy lại vị thế để xác nhận kết nối ổn định
                                 if self.connector.get_open_positions() is not None:
                                     self.signals.log_message.emit("Kết nối lại thành công!")
                                     self.signals.connection_status.emit("Đã kết nối")
@@ -99,21 +97,19 @@ class BotWorker(QThread):
                         except Exception as e:
                             self.signals.log_message.emit(f"Lỗi khi kết nối lại: {e}")
                         
-                        time.sleep(retry_delay)
+                        self.msleep(retry_delay * 1000)
 
-                    if not is_reconnected:
-                        self.signals.log_message.emit("Không thể khôi phục kết nối. Dừng bot.")
-                        self.signals.connection_status.emit("Mất kết nối")
-                        self.signals.bot_status.emit("Lỗi kết nối")
+                    if not is_reconnected or not self._is_running:
+                        if self._is_running:
+                            self.signals.log_message.emit("Không thể khôi phục kết nối. Dừng bot.")
+                            self.signals.connection_status.emit("Mất kết nối")
+                            self.signals.bot_status.emit("Lỗi kết nối")
                         break # Thoát khỏi vòng lặp chính
                     
-                    # Lấy lại vị thế sau khi kết nối lại thành công
                     current_positions = self.connector.get_open_positions()
-                    if current_positions is None: # Vẫn lỗi sau khi cố gắng
-                         self.signals.log_message.emit("Vẫn không thể lấy dữ liệu sau khi kết nối lại. Dừng bot.")
-                         break
+                    if current_positions is None: break
                 
-                # 2. XỬ LÝ LOGIC BOT (KHI ĐÃ CÓ KẾT NỐI)
+                # 2. XỬ LÝ LOGIC BOT
                 current_count = len(current_positions)
                 
                 if current_count < self.previous_position_count:
@@ -127,7 +123,7 @@ class BotWorker(QThread):
                     if elapsed < self.cooldown_period:
                         remaining = int((self.cooldown_period - elapsed) / 60)
                         self.signals.log_message.emit(f"Đang hạ nhiệt... Còn lại {remaining} phút.")
-                        time.sleep(60) 
+                        self.msleep(60000) 
                         continue
                     else:
                         self.last_trade_close_time = None 
@@ -139,17 +135,27 @@ class BotWorker(QThread):
                 else:
                     self.signals.log_message.emit(f"[{datetime.now().strftime('%H:%M:%S')}] Ngoài giờ Kill Zone. Đang chờ...")
                     self.signals.market_bias.emit("Chưa kích hoạt (Ngoài KZ)")
-                    time.sleep(300) 
+                    self.msleep(300000) 
                 
-                time.sleep(60)
+                self.msleep(60000)
 
-            except KeyboardInterrupt:
-                self.signals.log_message.emit("Nhận tín hiệu Ctrl+C, đang dừng...")
-                break
             except Exception as e:
                 self.signals.log_message.emit(f"\nLỗi trong vòng lặp chính: {e}")
-                self.signals.log_message.emit(f"Chi tiết lỗi:\n{traceback.format_exc()}")
-                time.sleep(60)
+                self.msleep(60000)
+        
+        self.signals.log_message.emit("Bot đã dừng.")
+        self.signals.bot_status.emit("Đã dừng")
+        self.signals.market_bias.emit("Đã dừng") 
+        if self.connector:
+            self.connector.disconnect()
+            self.signals.log_message.emit("Đã ngắt kết nối.")
+
+    def msleep(self, milliseconds):
+        """Sleep interruptible by self._is_running."""
+        for _ in range(int(milliseconds / 100)):
+            if not self._is_running:
+                break
+            time.sleep(0.1)
         
         self.signals.log_message.emit("Bot đã dừng.")
         self.signals.bot_status.emit("Đã dừng")
