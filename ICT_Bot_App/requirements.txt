@@ -4,3 +4,4 @@ numpy
 pytz
 ccxt
 MetaTrader5
+pandas-ta

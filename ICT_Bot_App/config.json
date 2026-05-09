@@ -13,6 +13,10 @@
         "symbol": "ADAUSDm"
     },
     "trading": {
+        "trading_mode": "ICT",
+        "quant_sma_fast": 20,
+        "quant_sma_slow": 50,
+        "quant_rsi_period": 14,
         "timeframe": "M1",
         "timeframe_smaller": "M1",
         "htf_timeframe": "H4",

@@ -213,6 +213,15 @@ class MainWindow(QMainWindow):
         widget = QWidget()
         layout = QFormLayout(widget)
         
+        # Trading Mode
+        mode_group = QGroupBox("Chế độ Giao dịch")
+        mode_layout = QFormLayout(mode_group)
+        self.trading_mode_combo = QComboBox()
+        self.trading_mode_combo.addItems(["ICT", "QUANT"])
+        self.trading_mode_combo.setCurrentText(config_manager.get('trading.trading_mode', 'ICT') or 'ICT')
+        mode_layout.addRow("Chế độ (ICT / Định lượng):", self.trading_mode_combo)
+        layout.addWidget(mode_group)
+        
         # Timeframes
         tf_group = QGroupBox("Cấu trúc Thời gian")
         tf_layout = QFormLayout(tf_group)
@@ -497,6 +506,7 @@ class MainWindow(QMainWindow):
             config_manager.set('mt5.path', self.mt5_path_input.text())
             config_manager.set('binance.api_key', self.binance_api_key_input.text())
             config_manager.set('binance.secret_key', self.binance_secret_key_input.text())
+            config_manager.set('trading.trading_mode', self.trading_mode_combo.currentText())
             config_manager.set('trading.htf_timeframe', self.htf_timeframe_combo.currentText())
             config_manager.set('trading.timeframe', self.main_timeframe_combo.currentText())
             config_manager.set('trading.timeframe_smaller', self.ltf_timeframe_combo.currentText())
@@ -513,6 +523,25 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.append_to_log(f"Lỗi khi lưu cấu hình: {e}")
 
+    def update_bt_trades_table(self, trade: dict):
+        row = self.bt_trades_table.rowCount()
+        self.bt_trades_table.insertRow(row)
+        # ["Time", "Side", "Entry", "Exit", "SL", "TP", "P/L", "Reason"]
+        self.bt_trades_table.setItem(row, 0, QTableWidgetItem(str(trade.get('entry_time', ''))))
+        self.bt_trades_table.setItem(row, 1, QTableWidgetItem(str(trade.get('side', ''))))
+        self.bt_trades_table.setItem(row, 2, QTableWidgetItem(f"{trade.get('entry_price', 0):.5f}"))
+        self.bt_trades_table.setItem(row, 3, QTableWidgetItem(f"{trade.get('exit_price', 0):.5f}"))
+        self.bt_trades_table.setItem(row, 4, QTableWidgetItem(f"{trade.get('sl', 0):.5f}"))
+        self.bt_trades_table.setItem(row, 5, QTableWidgetItem(f"{trade.get('tp', 0):.5f}"))
+        self.bt_trades_table.setItem(row, 6, QTableWidgetItem(f"{trade.get('pnl', 0):.2f}"))
+        self.bt_trades_table.setItem(row, 7, QTableWidgetItem(str(trade.get('reason', ''))))
+
+    def on_backtest_finished(self, results: dict):
+        self.bt_start_btn.setEnabled(True)
+        msg = f"Backtest Hoàn thành!\nTổng PnL: ${results.get('total_pnl', 0):.2f}\nWin Rate: {results.get('win_rate', 0):.2f}%\nMax Drawdown: {results.get('max_drawdown', 0):.2f}%\nTổng số lệnh: {results.get('total_trades', 0)}"
+        self.append_to_log(msg)
+        QMessageBox.information(self, "Kết quả Backtest", msg)
+
     def start_backtest(self):
         params = {
             'symbol': self.bt_symbol_input.currentText(),
@@ -523,6 +552,9 @@ class MainWindow(QMainWindow):
         self.bt_worker = BacktestWorker(params)
         self.bt_worker.signals.progress.connect(self.bt_progress.setValue)
         self.bt_worker.signals.log_message.connect(self.append_to_log)
+        self.bt_worker.signals.trade_closed.connect(self.update_bt_trades_table)
+        self.bt_worker.signals.finished.connect(self.on_backtest_finished)
+        self.bt_trades_table.setRowCount(0)
         self.bt_worker.start()
         self.bt_start_btn.setEnabled(False)
 

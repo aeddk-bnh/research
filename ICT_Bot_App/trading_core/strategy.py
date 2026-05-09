@@ -6,12 +6,10 @@ from .market_structure import (
 )
 from .pd_arrays import detect_fvg, detect_order_block, detect_breaker_block
 from .silver_bullet import detect_silver_bullet_setup
-from .config_loader import (
-    TIMEFRAME, TIMEFRAME_SMALLER, RISK_PERCENT_PER_TRADE, TAKE_PROFIT_RR, 
-    ENABLE_LOGGING, SL_BUFFER_POINTS, OTE_ENABLED, OTE_LEVEL_PRIMARY,
-    PARTIAL_PROFITS_ENABLED, PARTIAL_TP1_PERCENT, PARTIAL_TP1_RR, 
-    PARTIAL_TP2_PERCENT, PARTIAL_TP2_RR, PARTIAL_TP3_RR
-)
+# Xóa import tĩnh tĩnh config_loader
+# Các tham số cấu hình sẽ được đọc động từ config_manager
+
+from .quant_strategy import calculate_quant_signals
 import math
 import pandas as pd
 
@@ -28,6 +26,18 @@ from typing import TYPE_CHECKING, cast, Any
 if TYPE_CHECKING:
     from .connectors.base_connector import BaseConnector
 
+def _safe_float(val, default):
+    try:
+        return float(val) if val is not None and val != '' else default
+    except (ValueError, TypeError):
+        return default
+
+def _safe_int(val, default):
+    try:
+        return int(val) if val is not None and val != '' else default
+    except (ValueError, TypeError):
+        return default
+
 def calculate_position_size(connector: 'BaseConnector', sl_price: float, entry_price: float, signals=None) -> float | None:
     balance = connector.get_account_balance()
     symbol_info = connector.get_symbol_info()
@@ -35,7 +45,7 @@ def calculate_position_size(connector: 'BaseConnector', sl_price: float, entry_p
     if balance is None or symbol_info is None:
         return None
 
-    risk_percent = float(RISK_PERCENT_PER_TRADE)
+    risk_percent = _safe_float(config_manager.get('trading.risk_percent_per_trade', 1.0), 1.0)
     if risk_percent <= 0:
         return None
 
@@ -76,7 +86,7 @@ def calculate_partial_orders(
     signal: str,
     connector: 'BaseConnector'
 ) -> list[dict]:
-    if not PARTIAL_PROFITS_ENABLED:
+    if not bool(config_manager.get('trading.partial_profits_enabled', False)):
         sl_distance = abs(entry_price - sl_price)
         tp = entry_price + (sl_distance * TAKE_PROFIT_RR) if signal == 'long' else entry_price - (sl_distance * TAKE_PROFIT_RR)
         return [{'quantity': total_quantity, 'tp': tp, 'label': 'FULL'}]
@@ -88,16 +98,16 @@ def calculate_partial_orders(
     sl_distance = abs(entry_price - sl_price)
     
     if signal == 'long':
-        tp1 = entry_price + (sl_distance * PARTIAL_TP1_RR)
-        tp2 = entry_price + (sl_distance * PARTIAL_TP2_RR)
-        tp3 = entry_price + (sl_distance * PARTIAL_TP3_RR)
+        tp1 = entry_price + (sl_distance * _safe_float(config_manager.get('trading.partial_tp1_rr', 1.0), 1.0))
+        tp2 = entry_price + (sl_distance * _safe_float(config_manager.get('trading.partial_tp2_rr', 2.0), 2.0))
+        tp3 = entry_price + (sl_distance * _safe_float(config_manager.get('trading.partial_tp3_rr', 3.0), 3.0))
     else:
-        tp1 = entry_price - (sl_distance * PARTIAL_TP1_RR)
-        tp2 = entry_price - (sl_distance * PARTIAL_TP2_RR)
-        tp3 = entry_price - (sl_distance * PARTIAL_TP3_RR)
+        tp1 = entry_price - (sl_distance * _safe_float(config_manager.get('trading.partial_tp1_rr', 1.0), 1.0))
+        tp2 = entry_price - (sl_distance * _safe_float(config_manager.get('trading.partial_tp2_rr', 2.0), 2.0))
+        tp3 = entry_price - (sl_distance * _safe_float(config_manager.get('trading.partial_tp3_rr', 3.0), 3.0))
     
-    qty1_raw = total_quantity * (PARTIAL_TP1_PERCENT / 100)
-    qty2_raw = total_quantity * (PARTIAL_TP2_PERCENT / 100)
+    qty1_raw = total_quantity * (_safe_float(config_manager.get('trading.partial_tp1_percent', 50.0), 50.0) / 100)
+    qty2_raw = total_quantity * (_safe_float(config_manager.get('trading.partial_tp2_percent', 25.0), 25.0) / 100)
     qty3_raw = total_quantity - qty1_raw - qty2_raw
     
     qty1 = math.floor(qty1_raw / volume_step) * volume_step
@@ -107,13 +117,13 @@ def calculate_partial_orders(
     orders = []
     
     if qty1 >= volume_min:
-        orders.append({'quantity': qty1, 'tp': tp1, 'label': f'TP1 ({PARTIAL_TP1_PERCENT}%@{PARTIAL_TP1_RR}:1)'})
+        orders.append({'quantity': qty1, 'tp': tp1, 'label': f'TP1 ({_safe_float(config_manager.get('trading.partial_tp1_percent', 50.0), 50.0)}%@{_safe_float(config_manager.get('trading.partial_tp1_rr', 1.0), 1.0)}:1)'})
     
     if qty2 >= volume_min:
-        orders.append({'quantity': qty2, 'tp': tp2, 'label': f'TP2 ({PARTIAL_TP2_PERCENT}%@{PARTIAL_TP2_RR}:1)'})
+        orders.append({'quantity': qty2, 'tp': tp2, 'label': f'TP2 ({_safe_float(config_manager.get('trading.partial_tp2_percent', 25.0), 25.0)}%@{_safe_float(config_manager.get('trading.partial_tp2_rr', 2.0), 2.0)}:1)'})
     
     if qty3 >= volume_min:
-        orders.append({'quantity': qty3, 'tp': tp3, 'label': f'TP3 (Rest@{PARTIAL_TP3_RR}:1)'})
+        orders.append({'quantity': qty3, 'tp': tp3, 'label': f'TP3 (Rest@{_safe_float(config_manager.get('trading.partial_tp3_rr', 3.0), 3.0)}:1)'})
     
     if not orders:
         tp = entry_price + (sl_distance * TAKE_PROFIT_RR) if signal == 'long' else entry_price - (sl_distance * TAKE_PROFIT_RR)
@@ -123,7 +133,7 @@ def calculate_partial_orders(
 
 
 def check_ote_confluence(df: pd.DataFrame, current_price: float, bias: str, signals=None) -> tuple[bool, dict | None]:
-    if not OTE_ENABLED:
+    if not bool(config_manager.get('trading.ote_enabled', True)):
         return True, None
     
     direction = 'bullish' if bias == 'long' else 'bearish'
@@ -169,7 +179,7 @@ def evaluate_signal(df_main: pd.DataFrame, df_small: pd.DataFrame, daily_bias: s
     latest_high = df_main['high'].iloc[-1]
     latest_low = df_main['low'].iloc[-1]
     point_value = getattr(connector.get_symbol_info(), 'point', 0.00001)
-    sl_buffer_value = SL_BUFFER_POINTS * point_value
+    sl_buffer_value = _safe_float(config_manager.get('trading.sl_buffer_points', 50.0), 50.0) * point_value
 
     zone = "PREMIUM" if latest_close > equilibrium else "DISCOUNT"
     reason_parts.append(f"Zone: {zone}")
@@ -179,7 +189,7 @@ def evaluate_signal(df_main: pd.DataFrame, df_small: pd.DataFrame, daily_bias: s
             return 'none', None, None, "Price in Premium, skipping LONG"
         
         in_ote, _ = check_ote_confluence(df_main, latest_close, bias, signals)
-        if OTE_ENABLED:
+        if bool(config_manager.get('trading.ote_enabled', True)):
             reason_parts.append(f"OTE: {'Yes' if in_ote else 'No'}")
             if not in_ote:
                 return 'none', None, None, "Price not in OTE zone"
@@ -218,7 +228,7 @@ def evaluate_signal(df_main: pd.DataFrame, df_small: pd.DataFrame, daily_bias: s
             return 'none', None, None, "Price in Discount, skipping SHORT"
 
         in_ote, _ = check_ote_confluence(df_main, latest_close, bias, signals)
-        if OTE_ENABLED:
+        if bool(config_manager.get('trading.ote_enabled', True)):
             reason_parts.append(f"OTE: {'Yes' if in_ote else 'No'}")
             if not in_ote:
                 return 'none', None, None, "Price not in OTE zone"
@@ -328,9 +338,65 @@ def analyze_dataframe(df: pd.DataFrame, is_ltf=False) -> pd.DataFrame:
         return detect_breaker_block(df_ob)
     return df_bos
 
+def execute_quant_strategy(connector: 'BaseConnector', signals=None) -> None:
+    main_timeframe = config_manager.get('trading.timeframe', '1h') or '1h'
+    df_main = connector.fetch_ohlcv(main_timeframe, limit=200)
+    if df_main is None or df_main.empty:
+        return
+        
+    df_quant = calculate_quant_signals(df_main.copy(), _safe_int(config_manager.get('trading.quant_sma_fast', 20), 20), _safe_int(config_manager.get('trading.quant_sma_slow', 50), 50), _safe_int(config_manager.get('trading.quant_rsi_period', 14), 14))
+    if 'quant_signal' not in df_quant.columns:
+        return
+        
+    latest_signal = df_quant['quant_signal'].iloc[-1]
+    if latest_signal == 0:
+        return
+        
+    signal_type = 'long' if latest_signal == 1 else 'short'
+    reason = f"QUANT: SMA({_safe_int(config_manager.get('trading.quant_sma_fast', 20), 20)}/{_safe_int(config_manager.get('trading.quant_sma_slow', 50), 50)}) Crossover + RSI({_safe_int(config_manager.get('trading.quant_rsi_period', 14), 14)})"
+    
+    direction = 'bullish' if signal_type == 'long' else 'bearish'
+    swing_low, swing_high = get_recent_swing_range(df_quant, direction)
+    
+    entry_price = df_quant['Close'].iloc[-1] if 'Close' in df_quant.columns else df_quant['close'].iloc[-1]
+    
+    if signal_type == 'long':
+        sl_price = swing_low if swing_low else entry_price * 0.99
+    else:
+        sl_price = swing_high if swing_high else entry_price * 1.01
+        
+    point_value = getattr(connector.get_symbol_info(), 'point', 0.00001)
+    sl_buffer_value = _safe_float(config_manager.get('trading.sl_buffer_points', 50.0), 50.0) * point_value
+    
+    if signal_type == 'long':
+        sl_price -= sl_buffer_value
+    else:
+        sl_price += sl_buffer_value
+        
+    if (signal_type == 'long' and entry_price <= sl_price) or (signal_type == 'short' and entry_price >= sl_price):
+        return
+
+    quantity = calculate_position_size(connector, sl_price, entry_price, signals)
+    
+    if quantity is not None and quantity > 0:
+        partial_orders = calculate_partial_orders(quantity, entry_price, sl_price, signal_type, connector)
+        if bool(config_manager.get('trading.partial_profits_enabled', False)):
+            for order in partial_orders:
+                connector.place_order(signal_type, order['quantity'], sl_price, order['tp'], comment=reason)
+        else:
+            rr = _safe_float(config_manager.get('trading.take_profit_rr', 2.0), 2.0)
+            sl_distance = abs(entry_price - sl_price)
+            tp_price = entry_price + (sl_distance * rr) if signal_type == 'long' else entry_price - (sl_distance * rr)
+            connector.place_order(signal_type, quantity, sl_price, tp_price, comment=reason)
+
 def execute_strategy(connector: 'BaseConnector', signals=None) -> None:
     if connector.get_open_positions():
         return
+
+    if str(config_manager.get('trading.trading_mode', 'ICT')).upper() == 'QUANT':
+        execute_quant_strategy(connector, signals)
+        return
+
 
     main_timeframe = config_manager.get('trading.timeframe', 'H1') or 'H1'
     small_timeframe = config_manager.get('trading.timeframe_smaller', 'M15') or 'M15'
@@ -356,11 +422,11 @@ def execute_strategy(connector: 'BaseConnector', signals=None) -> None:
         if quantity is not None and quantity > 0:
             partial_orders = calculate_partial_orders(quantity, entry_price, sl_price, signal, connector)
             
-            if PARTIAL_PROFITS_ENABLED:
+            if bool(config_manager.get('trading.partial_profits_enabled', False)):
                 for i, order in enumerate(partial_orders):
                     connector.place_order(signal, order['quantity'], sl_price, order['tp'], comment=reason)
             else:
-                rr = float(TAKE_PROFIT_RR)
+                rr = _safe_float(config_manager.get('trading.take_profit_rr', 2.0), 2.0)
                 sl_distance = abs(entry_price - sl_price)
                 tp_price = entry_price + (sl_distance * rr) if signal == 'long' else entry_price - (sl_distance * rr)
                 

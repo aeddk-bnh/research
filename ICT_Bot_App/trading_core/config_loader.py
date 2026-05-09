@@ -18,6 +18,11 @@ def _safe_int(value, default):
         return int(default)
 
 # --- Cấu hình Giao dịch chung ---
+TRADING_MODE = str(config_manager.get('trading.trading_mode', 'ICT')).upper()
+QUANT_SMA_FAST = _safe_int(config_manager.get('trading.quant_sma_fast', 20), 20)
+QUANT_SMA_SLOW = _safe_int(config_manager.get('trading.quant_sma_slow', 50), 50)
+QUANT_RSI_PERIOD = _safe_int(config_manager.get('trading.quant_rsi_period', 14), 14)
+
 TIMEFRAME = str(config_manager.get('trading.timeframe', '1h'))
 TIMEFRAME_SMALLER = str(config_manager.get('trading.timeframe_smaller', '15m'))
 RISK_PERCENT_PER_TRADE = _safe_float(config_manager.get('trading.risk_percent_per_trade', 1.0), 1.0)

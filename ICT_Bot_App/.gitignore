@@ -136,3 +136,7 @@ dist/
 build/
 *.exe
 *.spec
+# Bot specific ignores
+TradeJournal/
+mock_data.csv
+backtest_results*.csv

@@ -213,3 +213,25 @@ Bot đã sẵn sàng để chạy backtest toàn diện hoặc thử nghiệm de
 - Chạy backtest dài hạn (1-3 tháng) để đánh giá hiệu quả của các chiến lược mới.
 - Tinh chỉnh tham số (thresholds, lookback periods) nếu cần.
 - Bổ sung trade journaling (lưu screenshot hoặc log chi tiết hơn).
+
+## Giai đoạn 15: Quantitative Trading Mode (Phase 4)
+
+*   **Mục tiêu:** Thêm chế độ giao dịch định lượng (Quant Mode) chạy song song với ICT Mode.
+*   **Thực thi:**
+    1.  Tích hợp thư viện pandas-ta.
+    2.  Tạo module 	rading_core/quant_strategy.py áp dụng thuật toán SMA Crossover (20/50) kết hợp điều kiện RSI (14) để chống nhiễu.
+    3.  Thêm biến 	rading_mode vào config.json và cập nhật logic router trong strategy.py.
+    4.  Cập nhật UI trong pp/main_window.py (Tab Chiến lược) cho phép người dùng chọn chế độ ICT hoặc QUANT.
+*   **Kết quả:** Bot hiện có thể chuyển đổi dễ dàng giữa chế độ Price Action (ICT) truyền thống và giao dịch theo Chỉ báo Kỹ thuật (Quant/Algo).
+
+---
+
+## Giai đoạn 16: Rà soát & Vá Lỗi Runtime Cuối Cùng
+
+*   **Mục tiêu:** Kiểm tra, phát hiện và sửa chữa các lỗi runtime, giao diện, và logic ngầm khi ứng dụng hoạt động.
+*   **Thực thi:**
+    1.  **Sửa lỗi UI Backtesting:** Sửa lỗi nút "Bắt đầu" bị liệt và bảng kết quả trống trơn sau khi backtest xong bằng cách kết nối sự kiện `finished` và `trade_closed` trong `BacktestWorker`.
+    2.  **Sửa lỗi Mất Nến Trong Backtest:** Điều chỉnh mốc `end_date` để lấy trọn vẹn 23h59m59s của ngày kết thúc, tránh việc bỏ sót nến.
+    3.  **Vá lỗi Mất Kết Nối Ngầm (msleep bug):** Loại bỏ logic tự động ngắt kết nối `connector.disconnect()` bị gọi sai chỗ bên trong hàm `msleep` của `BotWorker`, giúp bot duy trì kết nối MT5 ổn định 24/7.
+    4.  **Vá lỗi Ép Kiểu Cấu Hình:** Sửa lỗi Python Falsy evaluation (`0.0 or 50.0`) khiến người dùng không thể cài đặt các tham số về `0`. Xây dựng các hàm `_safe_float` và `_safe_int` thay thế.
+*   **Kết quả:** Ứng dụng đã hoàn toàn loại bỏ các điểm nghẽn runtime và crash ngầm, hệ thống hoạt động trơn tru cả ở Front-end và Back-end. Sẵn sàng Commit.

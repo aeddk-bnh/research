@@ -156,13 +156,6 @@ class BotWorker(QThread):
             if not self._is_running:
                 break
             time.sleep(0.1)
-        
-        self.signals.log_message.emit("Bot đã dừng.")
-        self.signals.bot_status.emit("Đã dừng")
-        self.signals.market_bias.emit("Đã dừng") 
-        if self.connector:
-            self.connector.disconnect()
-            self.signals.log_message.emit("Đã ngắt kết nối.")
 
     def stop(self):
         """Dừng vòng lặp của bot một cách an toàn."""

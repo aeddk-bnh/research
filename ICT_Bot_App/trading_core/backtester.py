@@ -60,7 +60,7 @@ class Backtester:
         df_htf.index = pd.to_datetime(df_htf.index).tz_localize(None)
 
         start_ts = pd.to_datetime(self.start_date).replace(tzinfo=None)
-        end_ts = pd.to_datetime(self.end_date).replace(tzinfo=None)
+        end_ts = pd.to_datetime(self.end_date).replace(tzinfo=None) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
         
         df_main = df_main[(df_main.index >= start_ts) & (df_main.index <= end_ts)]
         
@@ -103,6 +103,44 @@ class Backtester:
                 if len(df_small_slice) < 50 or len(df_htf_slice) < 50 or not isinstance(df_main_slice, pd.DataFrame) or not isinstance(df_small_slice, pd.DataFrame) or not isinstance(df_htf_slice, pd.DataFrame):
                     continue
 
+                try:
+                    from app.config_manager import config_manager
+                    trading_mode = str(config_manager.get('trading.trading_mode', 'ICT')).upper()
+                except Exception:
+                    trading_mode = 'ICT'
+
+                if trading_mode == 'QUANT':
+                    from trading_core.quant_strategy import calculate_quant_signals
+                    sma_f = int(config_manager.get('trading.quant_sma_fast', 20))
+                    sma_s = int(config_manager.get('trading.quant_sma_slow', 50))
+                    rsi_p = int(config_manager.get('trading.quant_rsi_period', 14))
+                    
+                    df_quant = calculate_quant_signals(df_main_slice.copy(), sma_f, sma_s, rsi_p)
+                    latest_sig = df_quant['quant_signal'].iloc[-1]
+                    
+                    if latest_sig != 0:
+                        signal = 'long' if latest_sig == 1 else 'short'
+                        reason = f"QUANT: SMA({sma_f}/{sma_s}) Crossover + RSI({rsi_p})"
+                        entry = df_quant['Close'].iloc[-1] if 'Close' in df_quant.columns else df_quant['close'].iloc[-1]
+                        
+                        from trading_core.market_structure import get_recent_swing_range
+                        direction = 'bullish' if signal == 'long' else 'bearish'
+                        swing_low, swing_high = get_recent_swing_range(df_quant, direction)
+                        
+                        if signal == 'long':
+                            sl = swing_low if swing_low else entry * 0.99
+                        else:
+                            sl = swing_high if swing_high else entry * 1.01
+                            
+                        point_value = getattr(self.connector.get_symbol_info(), 'point', 0.00001) if self.connector else 0.00001
+                        sl_buffer_value = float(config_manager.get('trading.sl_buffer_points', 50.0)) * point_value
+                        if signal == 'long': sl -= sl_buffer_value
+                        else: sl += sl_buffer_value
+                        
+                        self._open_position(signal, entry, sl, reason, current_idx, open_positions)
+                    continue
+
+                # ICT Mode
                 df_main_analyzed = self._analyze_dataframe(df_main_slice.copy())
                 df_small_analyzed = self._analyze_dataframe(df_small_slice.copy(), is_ltf=True)
                 
